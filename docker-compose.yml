@@ -1,0 +1,39 @@
+services:
+  postgres:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER:-demo_crm_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in the root .env file}
+      POSTGRES_DB: ${DB_NAME:-demo_crm}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  backend:
+    build: ./crm-backend
+    depends_on:
+      - postgres
+    environment:
+      DB_HOST: postgres
+      DB_USER: ${DB_USER:-demo_crm_user}
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in the root .env file}
+      DB_NAME: ${DB_NAME:-demo_crm}
+      DB_PORT: 5432
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in the root .env file}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:?Set INTERNAL_API_SECRET in the root .env file}
+    ports:
+      - "5000:5000"
+
+  frontend:
+    build: ./crm-fronend
+    depends_on:
+      - backend
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:5000/api}
+    ports:
+      - "3000:3000"
+
+volumes:
+  postgres_data:

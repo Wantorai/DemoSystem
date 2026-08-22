@@ -1,0 +1,50 @@
+{
+  "name": "orderspace-filespace-desktop",
+  "version": "0.1.6",
+  "private": true,
+  "description": "Windows sync client for OrderSpace FileSpace",
+  "author": "OrderSpace",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "check": "node --check main.js && node --check preload.js && node --check src/apiClient.js && node --check src/pathUtils.js && node --check src/stateStore.js && node --check src/syncEngine.js && node --check src/updateService.js && node --check renderer/app.js && node --check scripts/afterPack.js",
+    "pack": "electron-builder --dir",
+    "dist:win": "electron-builder --win nsis --x64"
+  },
+  "devDependencies": {
+    "electron": "43.2.0",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "ru.orderspace.filespace",
+    "productName": "OrderSpace FileSpace",
+    "asar": true,
+    "afterPack": "scripts/afterPack.js",
+    "files": [
+      "main.js",
+      "preload.js",
+      "assets/**/*",
+      "src/**/*",
+      "renderer/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "OrderSpace-FileSpace-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

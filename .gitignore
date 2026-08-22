@@ -1,0 +1,46 @@
+# Dependencies and build output
+node_modules/
+.next/
+dist/
+build/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Runtime data and backups
+logs/
+*.log
+*.dump
+*.tar.gz
+*.sql
+*.sqlite
+*.sqlite3
+backups/
+tmp/
+uploads/
+vosk-models/
+/crm-backend/test/
+/crm-backend/replica/
+/socdep-api/data/
+
+# Local tooling
+.vscode/
+.idea/
+.agents/
+.codex/
+.npm/
+.nvm/
+.cache/
+.ssh/
+venv/
+.venv/
+
+# Generated installers
+crm-fronend/public/downloads/*.exe

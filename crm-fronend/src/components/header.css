@@ -1,0 +1,178 @@
+/* Общий стиль для хедера */
+
+
+/* header.css */
+
+/* 1. Базовый хедер */
+.header {
+  background-color: var(--primary-os-color);
+  padding: 0 20px;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+}
+.header-container {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  position: relative; /* для абсолютного меню */
+}
+
+/* 2. Стили для desktop */
+.nav .menu {
+  display: flex;
+  list-style: none;
+  gap: 8px;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+}
+
+/* 3. Кнопка-гамбургер по умолчанию прячем */
+.hamburger {
+  display: none;
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  color: white;
+  cursor: pointer;
+}
+
+/* ========== MEDIA QUERIES ========== */
+@media (max-width: 768px) {
+  /* 4. Показываем кнопку на мобилке */
+  .hamburger {
+    display: block;
+  }
+
+  /* 5. Скрываем меню */
+  .nav .menu {
+    position: absolute;
+    top: 100%; left: 0; right: 0;
+    background: var(--primary-os-color);
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px 20px;
+
+    /* Скрываем */
+    display: none;
+    z-index: 1001;
+  }
+
+  /* 6. Важно: правило для .open идёт **после** правила для .menu */
+  .nav .menu.open {
+    display: flex;
+  }
+
+  /* 7. Крупнее шрифт для тапа */
+  .nav .menu.open .menu-item a {
+    font-size: 1.2rem;
+    color: white;
+  }
+}
+
+  
+  .menu-item {
+    margin-right: 0;
+  }
+  
+.auth-info {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex-shrink: 1;
+}
+  
+  .auth-details span {
+    margin-right: 0px;
+  }
+  
+  .auth-details button {
+    cursor: pointer;
+  }
+
+
+
+/* Элементы меню */
+.menu-item a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 40px;
+    padding: 0 10px;
+    text-decoration: none;
+    color: white;
+    font-size: 1rem;
+    line-height: 1;
+    transition: color 0.3s, background-color 0.3s;
+}
+
+/* Эффект при наведении */
+.menu-item a:hover {
+    color: #ffcc00; /* Желтый цвет */
+}
+
+.auth-details {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.login-name {
+  max-width: 160px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.logout-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 0 !important;
+  flex-shrink: 0;
+  padding-right: 0px !important;
+  padding-left: 0px !important;
+}
+
+.logout-icon {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+@media (max-width: 768px) {
+  .header {
+    padding: 0 10px;
+  }
+
+  .header-container {
+    gap: 8px;
+  }
+
+  .auth-details {
+    gap: 4px !important;
+    min-width: 0;
+  }
+
+  .login-label {
+    display: none;
+  }
+
+  .login-name {
+    max-width: 92px;
+    font-size: 0.85rem;
+  }
+
+  .logout-text {
+    display: none;
+  }
+
+  .logout-btn {
+    text-decoration: none !important;
+    padding: 2px 2px;
+  }
+}
+
+
+

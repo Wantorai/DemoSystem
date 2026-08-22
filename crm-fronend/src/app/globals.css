@@ -1,0 +1,1429 @@
+﻿@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+
+
+
+@font-face {
+    font-family: 'Finlandica';
+    src: url('/fonts/finlandica/static/Finlandica-Regular.ttf') format('truetype');
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'Finlandica';
+    src: url('/fonts/finlandica/static/Finlandica-Bold.ttf') format('truetype');
+    font-weight: 700;
+    font-style: normal;
+    font-display: swap;
+} 
+
+
+
+/* @font-face {
+  font-family: 'Nunito Sans';
+  src: url('/fonts/NunitoSans/NunitoSans-VariableFont_YTLC,opsz,wdth,wght.ttf') format('truetype');
+  font-weight: 100 900; 
+  font-style: normal;
+  font-display: swap; 
+} */
+
+/* @font-face {
+  font-family: 'Nunito Sans';
+  src: url('/fonts/NunitoSans/NunitoSans-Italic-VariableFont_YTLC,opsz,wdth,wght.ttf') format('truetype');
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap; 
+}  */
+
+
+
+:root {
+    --font-size: 16px; /* начальный размер шрифта */
+    --radius: 0.5rem;
+    --primary-os-color: #007bff;
+    --primary-os-hover-color: #0056b3;
+  }
+  
+
+body {
+    font-family: 'Finlandica', sans-serif;
+    font-size: var(--font-size);
+    line-height: 1.25;
+}
+
+
+/* body {
+  font-family: 'Nunito Sans', sans-serif;
+  font-size: var(--font-size);
+} */
+
+
+
+
+
+body.loading {
+    opacity: 0;
+    pointer-events: none; /* Блокирует клики, пока страница не загрузилась */
+    /* transition: opacity 0.2s ease-in-out; */
+}
+
+
+
+
+
+/* Стили для страницы клиента */
+
+/* Заголовки страницы */
+h1 {
+    font-size: 2rem;
+    margin-bottom: 20px;
+}
+
+
+
+/* Кнопки для редактирования и удаления */
+button {
+    padding: 10px 20px;
+    margin-top: 10px;
+    background-color: var(--primary-os-color);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 1rem;
+    font-family: inherit;
+    line-height: 1.25;
+    transition: background-color 0.3s;
+    margin-right: 10px;
+}
+
+/* Кнопка при наведении */
+button:hover {
+    background-color: var(--primary-os-hover-color);
+}
+
+/*
+ * FileSpace uses compact utility-styled controls. The legacy global button
+ * rule above must not add a blue background, large padding and margins there.
+ * :where() keeps this reset less specific than Tailwind utility classes.
+ */
+:where(.filespace-page) button {
+    margin: 0;
+    padding: 0;
+    background-color: transparent;
+    color: inherit;
+    border-radius: 0;
+    font-size: inherit;
+}
+
+:where(.filespace-page) button:hover {
+    background-color: transparent;
+}
+
+.os-primary-bg {
+    background-color: var(--primary-os-color) !important;
+}
+
+.os-primary-bg:hover {
+    background-color: var(--primary-os-hover-color) !important;
+}
+
+.os-primary-text {
+    color: var(--primary-os-color) !important;
+}
+
+.os-primary-border {
+    border-color: var(--primary-os-color) !important;
+}
+
+.os-primary-ring:focus {
+    --tw-ring-color: var(--primary-os-color) !important;
+}
+
+
+
+/* Стиль для кнопок действия */
+button:focus {
+    outline: none;
+}
+
+
+
+
+
+.details {
+    max-width: 500px;
+
+}
+
+.detail-row {
+    display: flex!important;
+    justify-content: space-between;
+    margin-bottom: 10px; /* Отступ между строками */
+}
+
+.labelClient {
+    font-weight: bold; /* Жирный текст для метки */
+    flex: 0 0 150px; /* Ширина столбца для меток */
+    text-align: left; /* Выравнивание текста метки */
+    padding-right: 10px; /* Отступ между меткой и значением */
+    margin-top: 15px;
+}
+
+.valueClient {
+    flex: 1; /* Значения занимают оставшееся пространство */
+    text-align: left; /* Выравнивание текста значения */
+    padding: 8px;
+    margin: 10px 0;
+    border-radius: 4px;
+    border: 1px solid #ccc;
+    width: -webkit-fill-available;
+}
+
+
+.newValueConfig {
+    flex: 1; /* Значения занимают оставшееся пространство */
+    text-align: left; /* Выравнивание текста значения */
+    padding: 8px;
+    margin: 10px 0;
+    margin-right: 10px;
+    border-radius: 4px;
+    border: 1px solid #ccc;
+}
+
+
+
+.permissions_path {
+    font-size: 0.7rem;
+    width: 50px;
+    position: sticky;
+    left: 0;
+    background: white;
+    z-index: 2;
+}
+
+
+.permissions_value {
+    width: -webkit-fill-available;
+    padding: 3px;
+    font-weight: bold;
+}
+
+
+/* Стили для страницы задачи */
+
+/* Блок с информацией о задаче */
+.task-info {
+    margin-bottom: 20px;
+    font-size: 1.2rem;
+}
+
+/* Форматирование даты */
+.task-info p {
+    margin: 5px 0;
+}
+
+
+
+
+
+/* Стили для страницы всех клиентов */
+
+/* Таблица клиентов */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+}
+
+/* Строки таблицы */
+table th, table td {
+    padding: 12px 15px;
+    text-align: left;
+    border-bottom: 1px solid #f1f1f1;
+}
+
+/* Заголовки таблицы */
+table th {
+    background-color: #f4f4f9;
+    font-weight: bold;
+}
+
+/* Страница заказа: таблицы и управляющие элементы должны сжиматься на телефонах. */
+.order-page {
+    min-width: 0;
+    overflow-x: clip;
+}
+
+.order-page button {
+    margin-right: 0;
+}
+
+.order-page-card {
+    min-width: 0;
+}
+
+.order-page-card table {
+    table-layout: fixed;
+}
+
+.order-page-card th:first-child,
+.order-page-card td:first-child {
+    width: 38%;
+    overflow-wrap: anywhere;
+}
+
+.order-page-card th:last-child,
+.order-page-card td:last-child {
+    width: 62%;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.order-page-card td input:not([type="checkbox"]),
+.order-page-card td select,
+.order-page-card td textarea {
+    min-width: 0;
+    max-width: 100%;
+}
+
+.order-addon-actions button,
+.order-save-actions button {
+    margin-top: 0;
+}
+
+.order-auto-textarea {
+    display: block;
+    min-height: 2.25rem;
+    overflow: hidden;
+    resize: none;
+    line-height: 1.35;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.order-field-actions a {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.25rem;
+    height: 2.25rem;
+    color: #fff;
+    background: var(--primary-os-color);
+    border-radius: 0.5rem;
+    transition: background-color 0.2s, transform 0.2s;
+}
+
+.order-field-actions a:hover {
+    background: var(--primary-os-hover-color);
+}
+
+.order-field-actions a:active {
+    transform: scale(0.96);
+}
+
+/* Форма создания заказа. Стили изолированы от остальных форм CRM. */
+.add-order-page,
+.add-order-fields,
+.add-order-fields .detail-row {
+    min-width: 0;
+}
+
+.add-order-page button {
+    margin-right: 0;
+}
+
+.add-order-fields.details {
+    max-width: 56rem;
+}
+
+.add-order-fields .detail-row {
+    align-items: flex-start;
+    gap: 1rem;
+    margin-bottom: 0.5rem;
+}
+
+.add-order-fields .labelClient {
+    flex-basis: 13rem;
+    overflow-wrap: anywhere;
+}
+
+.add-order-fields .valueClient,
+.add-order-fields select,
+.add-order-fields textarea {
+    box-sizing: border-box;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.add-order-check-text .labelClient {
+    flex: 0 0 auto;
+    margin: 0;
+    padding: 0;
+}
+
+.add-order-check-text .labelClient .valueClient {
+    width: auto;
+    margin: 0;
+}
+
+.add-order-check-text > .valueClient {
+    margin: 0;
+}
+
+.add-order-submit-actions button {
+    margin-top: 0;
+}
+
+/* Большая таблица заказов: прокрутка остается внутри таблицы. */
+.orders-page {
+    overflow: hidden;
+}
+
+.orders-page button {
+    margin-right: 0;
+}
+
+.orders-filter-actions button,
+.orders-toolbar > button,
+.orders-toolbar button {
+    margin-top: 0;
+}
+
+.orders-table-scroll {
+    max-height: calc(100dvh - 9rem);
+    scrollbar-gutter: stable;
+    -webkit-overflow-scrolling: touch;
+}
+
+.orders-table-scroll:focus-visible {
+    outline: 2px solid var(--primary-os-color);
+    outline-offset: 2px;
+}
+
+.orders-table {
+    box-shadow: none;
+}
+
+.orders-table th,
+.orders-table td {
+    box-sizing: border-box;
+    overflow-wrap: anywhere;
+}
+
+.orders-table .orders-key-column {
+    position: sticky;
+    left: 0;
+    z-index: 20;
+    box-shadow: 2px 0 4px rgba(0, 0, 0, 0.12);
+}
+
+.orders-table th.orders-key-column {
+    z-index: 40;
+    background: #f4f4f9;
+}
+
+.orders-table td.orders-key-column {
+    background: #fff;
+}
+
+.orders-table tr:hover td.orders-key-column {
+    background: #f0f0f0;
+}
+
+/* FullCalendar: десктоп остается прежним, мобильный получает отдельный viewport. */
+.calendar-page,
+.calendar-scroll-shell,
+.calendar-mobile-canvas {
+    min-width: 0;
+}
+
+.calendar-mobile-canvas {
+    width: 100%;
+    height: 100%;
+}
+
+.calendar-page .fc-header-toolbar {
+    z-index: 20;
+}
+
+.calendar-rotate-hint {
+    display: none;
+}
+
+/* Список клиентов и форма добавления клиента. */
+.clients-page,
+.clients-table-wrap,
+.add-client-page,
+.add-client-fields {
+    min-width: 0;
+}
+
+.clients-page button,
+.add-client-page button {
+    margin-right: 0;
+}
+
+.clients-toolbar h1 {
+    margin-bottom: 0;
+}
+
+.clients-table {
+    box-shadow: none;
+}
+
+.clients-table td {
+    overflow-wrap: anywhere;
+}
+
+.add-client-fields.details {
+    max-width: 42rem;
+}
+
+.add-client-fields .detail-row {
+    align-items: flex-start;
+    gap: 1rem;
+}
+
+.add-client-fields .labelClient {
+    flex-basis: 13rem;
+    overflow-wrap: anywhere;
+}
+
+.add-client-fields .valueClient {
+    box-sizing: border-box;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.add-client-actions button {
+    margin-top: 0;
+}
+
+.client-page,
+.client-edit-card {
+    min-width: 0;
+}
+
+.client-edit-card.details {
+    max-width: 42rem;
+}
+
+.client-edit-card .detail-row {
+    align-items: flex-start;
+    gap: 1rem;
+}
+
+.client-edit-card .labelClient {
+    flex-basis: 13rem;
+    overflow-wrap: anywhere;
+}
+
+.client-edit-card .valueClient {
+    box-sizing: border-box;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.client-edit-actions button {
+    margin-top: 0;
+    margin-right: 0;
+}
+
+/* Универсальный адаптивный контейнер для широких рабочих таблиц. */
+.wide-data-page {
+    min-width: 0;
+    overflow: hidden;
+}
+
+.wide-data-page button {
+    margin-top: 0;
+    margin-right: 0;
+}
+
+.wide-data-toolbar h1 {
+    margin-bottom: 0;
+    font-size: 1.5rem;
+    line-height: 1.2;
+    white-space: nowrap;
+}
+
+.wide-data-search input {
+    box-sizing: border-box;
+    min-width: 0;
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+    border: 1px solid #d1d5db;
+    border-radius: 0.375rem;
+}
+
+.wide-data-filters {
+    margin-bottom: 0.5rem;
+}
+
+.wide-data-scroll-hint {
+    margin-top: 0.25rem;
+    margin-bottom: 0.375rem;
+}
+
+.crm-page,
+.crm-toolbar,
+.crm-primary-controls,
+.crm-search-controls {
+    min-width: 0;
+}
+
+.crm-page button {
+    margin-top: 0;
+    margin-right: 0;
+}
+
+.crm-create-actions > button {
+    flex: 1 1 auto;
+}
+
+.crm-create-actions > div {
+    flex: 0 0 auto;
+}
+
+.crm-create-actions > div button {
+    box-sizing: border-box;
+    min-width: 2rem;
+    margin: 0;
+    padding: 0;
+}
+
+.crm-search-input {
+    box-sizing: border-box;
+    min-width: 0;
+}
+
+.wide-table-scroll {
+    max-height: calc(100dvh - 10rem);
+    scrollbar-gutter: stable;
+    -webkit-overflow-scrolling: touch;
+}
+
+.wide-table-scroll:focus-visible {
+    outline: 2px solid var(--primary-os-color);
+    outline-offset: 2px;
+}
+
+.wide-data-table {
+    width: max-content !important;
+    min-width: 100%;
+    box-shadow: none;
+}
+
+.wide-data-table th,
+.wide-data-table td {
+    box-sizing: border-box;
+    overflow-wrap: anywhere;
+}
+
+.wide-data-table th:first-child,
+.wide-data-table td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 20;
+    background-color: inherit;
+    box-shadow: 2px 0 4px rgba(0, 0, 0, 0.12);
+}
+
+.wide-data-table th:first-child {
+    z-index: 120;
+    background: #f4f4f9;
+}
+
+@media (max-width: 639px) {
+    .crm-filter-actions button,
+    .crm-search-controls button {
+        padding: 0.5rem 0.375rem;
+        font-size: 0.8125rem;
+    }
+
+    .wide-data-toolbar h1 {
+        font-size: 1.375rem;
+    }
+
+    .wide-data-filters button {
+        flex: 1 1 calc(33.333% - 0.5rem);
+        padding: 0.625rem 0.5rem;
+        font-size: 0.8125rem;
+    }
+
+    .wide-data-table th,
+    .wide-data-table td {
+        padding: 0.5rem !important;
+        font-size: 0.8125rem;
+        line-height: 1.25;
+    }
+
+    .wide-table-scroll {
+        max-height: calc(100dvh - 15rem);
+    }
+
+    .client-edit-card .detail-row {
+        flex-direction: column;
+        gap: 0.25rem;
+        margin-bottom: 1rem;
+    }
+
+    .client-edit-card .labelClient {
+        flex: none;
+        width: 100%;
+        margin-top: 0;
+        padding-right: 0;
+    }
+
+    .client-edit-card .valueClient {
+        width: 100%;
+        margin: 0;
+    }
+
+    .client-edit-actions button {
+        width: 100%;
+    }
+
+    .clients-toolbar h1 {
+        font-size: 1.5rem;
+    }
+
+    .clients-toolbar button {
+        width: 100%;
+        margin-top: 0;
+    }
+
+    .clients-table-wrap {
+        overflow: visible;
+        border: 0;
+        border-radius: 0;
+    }
+
+    .clients-table,
+    .clients-table tbody,
+    .clients-table tr,
+    .clients-table td {
+        display: block;
+        width: 100%;
+    }
+
+    .clients-table thead {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+    }
+
+    .clients-table {
+        border-collapse: separate;
+        border-spacing: 0 0.75rem;
+    }
+
+    .clients-table tr {
+        margin-bottom: 0.75rem;
+        overflow: hidden;
+        background: #fff;
+        border: 1px solid #d1d5db;
+        border-radius: 0.75rem;
+        box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+    }
+
+    .clients-table td {
+        display: grid;
+        grid-template-columns: minmax(7.5rem, 42%) minmax(0, 1fr);
+        gap: 0.75rem;
+        padding: 0.625rem 0.75rem;
+        border: 0;
+        border-bottom: 1px solid #e5e7eb;
+    }
+
+    .clients-table td:last-child {
+        border-bottom: 0;
+    }
+
+    .clients-table td:empty {
+        display: none;
+    }
+
+    .clients-table td:not(:has(~ td:not(:empty))) {
+        border-bottom: 0;
+    }
+
+    .clients-table td::before {
+        content: attr(data-label);
+        color: #475569;
+        font-weight: 700;
+    }
+
+    .add-client-fields .detail-row {
+        flex-direction: column;
+        gap: 0.25rem;
+        margin-bottom: 1rem;
+    }
+
+    .add-client-fields .labelClient {
+        flex: none;
+        width: 100%;
+        margin-top: 0;
+        padding-right: 0;
+    }
+
+    .add-client-fields .valueClient {
+        width: 100%;
+        margin: 0;
+    }
+
+    .add-client-actions button {
+        width: 100%;
+    }
+
+    .calendar-page {
+        padding: 0.5rem;
+        overflow: hidden;
+        background: #f8fafc;
+    }
+
+    .calendar-rotate-hint {
+        display: block;
+        margin-bottom: 0.5rem;
+        padding: 0.625rem 0.75rem;
+        color: #475569;
+        background: #fff;
+        border: 1px solid #cbd5e1;
+        border-radius: 0.625rem;
+        font-size: 0.8125rem;
+        line-height: 1.35;
+        text-align: center;
+    }
+
+    .calendar-scroll-shell {
+        width: 100%;
+        height: calc(100dvh - 9.5rem) !important;
+        border: 1px solid #d1d5db;
+        border-radius: 0.625rem;
+        overscroll-behavior: contain;
+        scrollbar-gutter: stable both-edges;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .calendar-mobile-canvas {
+        width: 1100px;
+        min-width: 1100px;
+        min-height: 760px;
+    }
+
+    .calendar-mobile-canvas .fc {
+        min-width: 1100px;
+        min-height: 760px;
+    }
+
+    .orders-table-scroll {
+        max-height: calc(100dvh - 17rem);
+    }
+
+    .orders-filter-actions button {
+        flex: 1 1 calc(50% - 0.5rem);
+        padding: 0.625rem 0.75rem;
+        font-size: 0.875rem;
+    }
+
+    .orders-toolbar > button {
+        width: 100%;
+    }
+
+    .orders-create-actions {
+        width: 100%;
+    }
+
+    .orders-create-actions .orders-add-button {
+        flex: 1 1 auto;
+        width: auto;
+        margin-top: 0;
+    }
+
+    .orders-create-actions > div {
+        flex: 0 0 auto;
+    }
+
+    .orders-create-actions > div button {
+        box-sizing: border-box;
+        min-width: 2rem;
+        margin-top: 0;
+        padding: 0;
+    }
+
+    .orders-toolbar input {
+        box-sizing: border-box;
+        min-width: 0;
+    }
+
+    .orders-table th,
+    .orders-table td {
+        padding: 0.5rem !important;
+        font-size: 0.8125rem;
+        line-height: 1.25;
+    }
+
+    .add-order-fields .detail-row {
+        flex-direction: column;
+        gap: 0.25rem;
+        padding-bottom: 0.75rem;
+        border-bottom: 1px solid #e5e7eb;
+    }
+
+    .add-order-fields .detail-row:last-child {
+        border-bottom: 0;
+    }
+
+    .add-order-fields .labelClient {
+        flex: none;
+        width: 100%;
+        margin-top: 0;
+        padding-right: 0;
+    }
+
+    .add-order-fields .valueClient,
+    .add-order-fields select,
+    .add-order-fields textarea {
+        width: 100%;
+        margin: 0;
+    }
+
+    .add-order-check-text {
+        width: 100%;
+        flex-wrap: wrap;
+    }
+
+    .add-order-check-text .labelClient {
+        width: auto;
+    }
+
+    .add-order-check-text > .valueClient {
+        flex: 1 1 100%;
+    }
+
+    .add-order-fields .filteredClients {
+        width: 100%;
+        max-width: 100%;
+        overflow-wrap: anywhere;
+    }
+
+    .add-order-submit-actions button {
+        width: 100%;
+    }
+
+    .order-page-card {
+        border-radius: 0.75rem;
+    }
+
+    .order-page-card table th,
+    .order-page-card table td {
+        padding: 0.5rem;
+        font-size: 0.875rem;
+        vertical-align: top;
+    }
+
+    .order-page-card td,
+    .order-page-card td > *,
+    .order-page-card td .flex,
+    .order-page-card td .grid {
+        min-width: 0;
+        max-width: 100%;
+    }
+
+    .order-page-card td .flex {
+        flex-wrap: wrap;
+    }
+
+    .order-page-card td input:not([type="checkbox"]),
+    .order-page-card td select,
+    .order-page-card td textarea {
+        box-sizing: border-box;
+        width: 100% !important;
+        min-inline-size: 0 !important;
+    }
+
+    .order-page-card td .flex > input:not([type="checkbox"]),
+    .order-page-card td .flex > select,
+    .order-page-card td .flex > textarea {
+        flex: 1 1 100%;
+    }
+
+    /* space-x добавляет левый отступ даже после переноса на новую строку. */
+    .order-page-card td .space-x-4 > :not([hidden]) ~ :not([hidden]) {
+        margin-left: 0;
+    }
+
+    .order-save-actions button {
+        width: 100%;
+    }
+}
+
+@media (max-width: 950px) and (max-height: 500px) and (orientation: landscape) {
+    .crm-toolbar {
+        flex-direction: row;
+        flex-wrap: wrap;
+        align-items: stretch;
+        gap: 0.5rem;
+    }
+
+    .crm-primary-controls,
+    .crm-search-controls {
+        flex: 1 1 20rem;
+        width: auto;
+    }
+
+    .crm-filter-actions button,
+    .crm-search-controls button,
+    .crm-create-actions > button {
+        height: 2rem;
+        padding: 0.375rem 0.5rem;
+        font-size: 0.75rem;
+    }
+
+    .crm-search-input {
+        height: 2rem;
+    }
+
+    .wide-data-page {
+        padding-top: 0.5rem;
+    }
+
+    .wide-data-toolbar {
+        flex-direction: row;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 0.375rem 0.75rem;
+    }
+
+    .wide-data-toolbar h1 {
+        font-size: 1.25rem;
+    }
+
+    .wide-data-search {
+        flex: 1 1 14rem;
+        width: auto;
+        min-width: 12rem;
+        max-width: none;
+    }
+
+    .wide-data-search input {
+        margin: 0.25rem auto !important;
+        padding: 0.375rem !important;
+        font-size: 0.875rem;
+    }
+
+    .wide-data-filters {
+        flex: 0 0 auto;
+        gap: 0.375rem;
+    }
+
+    .wide-data-filters button {
+        width: auto;
+        flex: 0 0 auto;
+        padding: 0.4rem 0.625rem;
+        font-size: 0.8125rem;
+    }
+
+    .wide-data-scroll-hint {
+        margin-top: 0.375rem;
+        margin-bottom: 0.25rem;
+    }
+
+    .wide-table-scroll {
+        max-height: calc(100dvh - 8rem);
+    }
+
+    .orders-page {
+        padding-top: 0.5rem;
+    }
+
+    .orders-toolbar {
+        flex-direction: row;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 0.375rem;
+    }
+
+    .orders-filter-actions {
+        width: auto;
+        flex: 0 1 auto;
+        flex-wrap: wrap;
+        gap: 0.375rem;
+    }
+
+    .orders-filter-actions button,
+    .orders-toolbar > button,
+    .orders-create-actions .orders-add-button {
+        width: auto;
+        flex: 0 0 auto;
+        padding: 0.4rem 0.625rem;
+        font-size: 0.8125rem;
+    }
+
+    .orders-search {
+        flex: 1 1 14rem;
+        width: auto;
+        min-width: 12rem;
+        max-width: none;
+    }
+
+    .orders-create-actions {
+        width: auto;
+        flex: 0 0 auto;
+    }
+
+    .orders-search #main-search {
+        margin: 0.25rem auto !important;
+        padding: 0.375rem !important;
+        font-size: 0.875rem !important;
+    }
+
+    .orders-scroll-hint {
+        margin-top: 0.375rem;
+        margin-bottom: 0.25rem;
+    }
+
+    .orders-table-scroll {
+        max-height: calc(100dvh - 8rem);
+    }
+
+    .calendar-page {
+        padding: 0.25rem;
+    }
+
+    .calendar-rotate-hint {
+        display: none;
+    }
+
+    .calendar-scroll-shell {
+        width: 100%;
+        height: calc(100dvh - 3.5rem) !important;
+        overflow: auto !important;
+        border: 1px solid #d1d5db;
+        border-radius: 0.375rem;
+        overscroll-behavior: contain;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .calendar-mobile-canvas,
+    .calendar-mobile-canvas .fc {
+        width: 1100px;
+        min-width: 1100px;
+        height: 100%;
+        min-height: 100%;
+    }
+
+    .calendar-mobile-canvas .fc-header-toolbar {
+        display: flex;
+        position: sticky;
+        left: 0;
+        flex-wrap: nowrap;
+        align-items: center;
+        justify-content: space-between;
+        width: calc(100vw - 0.5rem);
+        box-sizing: border-box;
+        gap: 0.25rem;
+        min-height: 2.25rem;
+        margin-bottom: 0.25rem !important;
+        padding: 0.125rem 0.25rem;
+        z-index: 20;
+    }
+
+    .calendar-mobile-canvas .fc-header-toolbar > * {
+        display: flex;
+        flex-wrap: nowrap;
+        align-items: center;
+        min-width: 0;
+        margin: 0 !important;
+    }
+
+    .calendar-mobile-canvas .fc-toolbar-title {
+        font-size: 0.875rem;
+        line-height: 1;
+        white-space: nowrap;
+    }
+
+    .calendar-mobile-canvas .fc .fc-button {
+        min-height: 1.875rem;
+        margin: 0 0.125rem 0 0;
+        padding: 0.25rem 0.4rem;
+        font-size: 0.6875rem;
+        line-height: 1;
+        white-space: nowrap;
+    }
+
+    .calendar-mobile-canvas .fc-button.fc-statusEr-button {
+        width: 1.875rem;
+        min-width: 1.875rem;
+        height: 1.875rem;
+        padding: 0;
+    }
+}
+
+/* Строки таблицы при наведении */
+.tasks tr:hover {
+    background-color: #f0f0f0;
+    cursor: pointer;
+}
+
+
+
+/* th, td {
+    white-space: nowrap;
+  } */
+
+  th.sticky, td.sticky {
+    position: sticky;
+    left: 0;
+    background: white;
+    z-index: 2;
+  }
+
+  th.sticky-second, td.sticky-second {
+    position: sticky;
+    left: 150px; /* Ширина первого столбца */
+    background: white;
+    z-index: 1;
+    font-size: 0.7rem;
+    width: 50px;
+  }
+
+/* Стили для модального окна на странице графика*/
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.modal-content {
+  background: #fff;
+  padding: 20px;
+  border-radius: 5px;
+
+  /* вместо ширины 300px сделаем более широким, но не больше 90% экрана */
+  width: 80%;
+  max-width: 800px;
+
+  /* Ограничиваем высоту 80% экрана и включаем прокрутку внутри */
+  max-height: 80vh;
+  overflow-y: auto;
+
+  text-align: center;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+}
+
+
+/* Стили поля клиентов в форме создания заказа */
+
+.css-1tlcqt-MuiAutocomplete-root .MuiOutlinedInput-root .MuiAutocomplete-input {
+    padding: 0!important;
+}
+
+.css-1tlcqt-MuiAutocomplete-root .MuiOutlinedInput-root .MuiAutocomplete-endAdornment {
+    right: 0!important;
+}
+
+.css-1tlcqt-MuiAutocomplete-root .MuiOutlinedInput-root {
+    padding: 6px!important;
+}
+
+.css-1tlcqt-MuiAutocomplete-root .MuiAutocomplete-inputRoot .MuiAutocomplete-input {
+    width: inherit!important;
+}
+
+.css-19qnlrw-MuiFormLabel-root-MuiInputLabel-root {
+    top: -8px!important;
+    font-family: "Finlandica", sans-serif!important;
+    font-size: 0.87rem!important;
+    color: inherit!important;
+
+}
+
+.hide label {
+    display: none;
+  }
+  
+
+.spacer {
+    padding-top: 20px;
+}
+
+
+.fc-h-event {
+    background-color: unset!important;
+    border: unset!important;
+}
+
+.fc-day-today {
+    background-color: rgba(255, 0, 0, 0.1); /* Красноватая подсветка */
+    border: 2px solid red; /* Красная рамка */
+  }
+  
+
+
+.holiday-slot {
+    background-color:#e0e0e0 !important;
+    min-width: 40px !important;
+    opacity: 0.7
+  }
+  .separator-lane {
+    background-color: #e0e0e0 !important;
+    height: 8px !important;
+  }
+
+
+
+/* .fc-timegrid-event-harness {
+    inset: 0px!important; 
+}
+
+
+.fc-timegrid-col-events {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+
+.fc-event {
+    margin-top: 5px;
+    margin-bottom: 5px;
+} */ 
+
+/* Стили для ошибок формы создания заказа */
+.error-border {
+    border: 1px solid red;
+  }
+  
+  .error-text {
+    color: red;
+    font-size: 12px;
+    margin-left: 10px;
+  }
+  
+
+a:-webkit-any-link {
+    text-decoration: none!important;
+}  
+
+
+/* Стили для ячеек дней */
+
+.fc .fc-daygrid-day-top {
+    margin-right: 10px!important;
+}
+
+
+
+.fc-header-toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+    background: white;
+    padding: 1px; 
+    margin-bottom: 0!important;
+  }
+
+  
+
+  .fc-event-highlight {
+    border: 2px solid red !important;
+    box-shadow: 0 0 10px red;
+  }
+
+  .fc-event-main div {
+    align-items: normal!important;
+  }
+
+  .fc-timeline-overlap-disabled .fc-timeline-event {
+    padding-top: 1px!important;
+    padding-bottom: 0px!important; 
+  }
+
+
+
+.fc-button.fc-statusEr-button {
+  /* Убираем padding */
+  padding: 0;
+  /* Фиксированный размер круга */
+  width: 2rem;   /* 32px */
+  height: 2rem;
+  /* Центрируем содержимое */
+  align-items: center;
+  justify-content: center;
+  /* Красный фон, белый текст, круглые края */
+  background-color: #dc2626; /* red-600 */
+  color: #fff;
+  border-radius: 50%;
+  /* Сброс дефолтного бордера */
+  border: none;
+}
+
+.fc-button.fc-statusEr-button:hover {
+  background-color: #b91c1c; /* red-700 */
+}
+
+
+.fc-event.highlighted-event {
+  /* Например, делаем рамку и яркий фон */
+  box-shadow: 0 0 0 3px rgba(234, 88, 35, 0.8);
+  background-color: #b91c1c !important; /* yellow-300 */
+}
+
+
+/* закрашиваем фон строки в списке */
+.fc-list-event.holiday-row {
+  background-color: #dbf9c7; /* нежно-красный фон */
+}
+
+/* при наведении не менять цвет */
+.fc-list-event.holiday-row:hover td {
+  background-color: #dbf9c7 !important;
+}
+
+.search-highlight {
+  transition: box-shadow 0.25s ease, background-color 0.25s ease;
+  box-shadow: 0 0 0 3px rgba(255, 230, 128, 0.6);
+  background-color: rgba(255, 250, 230, 0.8);
+  border-radius: 8px;
+}
+
+input,
+select,
+textarea {
+    font: inherit;
+}
+
+.webchat-audio-player {
+  background: transparent !important;
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+}
+
+.webchat-audio-player::-webkit-media-controls-enclosure,
+.webchat-audio-player::-webkit-media-controls-panel {
+  background-color: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}

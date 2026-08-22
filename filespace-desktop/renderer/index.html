@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:">
+  <title>OrderSpace FileSpace</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div class="brand-icon">OS</div>
+      <div>
+        <h1>OrderSpace FileSpace</h1>
+        <p>Файлы компании на вашем компьютере</p>
+      </div>
+      <span id="connectionBadge" class="badge neutral">Не подключено</span>
+    </header>
+
+    <section id="loginCard" class="card">
+      <h2>Вход в CRM</h2>
+      <form id="loginForm">
+        <label>Адрес сервера<input id="apiUrl" type="url" required></label>
+        <label>Имя пользователя<input id="username" autocomplete="username" required></label>
+        <label>Пароль<input id="password" type="password" autocomplete="current-password" required></label>
+        <p id="loginError" class="error"></p>
+        <button class="primary" type="submit">Войти</button>
+      </form>
+    </section>
+
+    <section id="syncCard" class="card hidden">
+      <div class="user-row">
+        <div>
+          <span class="eyebrow">Пользователь</span>
+          <strong id="userName"></strong>
+        </div>
+        <button id="logoutButton" class="link danger">Выйти</button>
+      </div>
+
+      <div class="folder-box">
+        <div>
+          <span class="eyebrow">Локальная папка</span>
+          <strong id="folderPath">Не выбрана</strong>
+        </div>
+        <button id="chooseFolderButton">Выбрать папку</button>
+      </div>
+
+      <div id="activity" class="activity">
+        <div class="pulse"></div>
+        <div>
+          <strong id="statusTitle">Синхронизация остановлена</strong>
+          <p id="statusDetails">Выберите папку и запустите синхронизацию.</p>
+        </div>
+      </div>
+
+      <div class="stats">
+        <div><strong id="rootCount">0</strong><span>пространств</span></div>
+        <div><strong id="fileCount">0</strong><span>файлов</span></div>
+      </div>
+
+      <div class="actions">
+        <button id="startButton" class="primary">Запустить</button>
+        <button id="syncButton">Синхронизировать сейчас</button>
+        <button id="openFolderButton">Открыть папку</button>
+      </div>
+
+      <label class="checkbox"><input id="autoStart" type="checkbox"> Запускать вместе с Windows</label>
+    </section>
+
+    <section id="updateCard" class="card update-card hidden">
+      <div>
+        <span class="eyebrow">Обновление клиента</span>
+        <h2 id="updateTitle">Доступна новая версия</h2>
+        <p id="updateDetails">Обновление готово к скачиванию.</p>
+        <p id="updateError" class="error"></p>
+      </div>
+      <button id="installUpdateButton" class="primary">Скачать и установить</button>
+    </section>
+
+    <section id="logCard" class="card hidden">
+      <div class="section-title"><h2>Последние действия</h2><button id="clearLog" class="link">Очистить</button></div>
+      <div id="log" class="log"><p class="muted">Действий пока нет</p></div>
+    </section>
+  </main>
+  <script src="./app.js"></script>
+</body>
+</html>
