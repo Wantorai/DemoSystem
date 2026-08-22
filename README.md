@@ -14,7 +14,7 @@ included.
 - `crm-fronend` — Next.js web application.
 - `crm-backend` — REST API, Socket.IO server and background workers.
 - `filespace-desktop` — desktop client packaging project.
-- `socdep-api` — a small supporting service.
+- `socdep-api` — a social deploy application.
 - `docs` — project documentation.
 
 ## Local setup
