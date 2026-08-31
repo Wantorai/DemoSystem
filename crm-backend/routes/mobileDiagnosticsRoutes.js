@@ -215,6 +215,20 @@ const networkContextFromEvent = (plain, metrics = null, state = null) => {
     cellularGeneration: safeText(safeState.cellularGeneration, 40),
     carrier: safeText(safeState.carrier, 120),
     apiInFlightAtStart: safeNumber(safeMetrics.apiInFlightAtStart ?? safeState.apiInFlightAtStart),
+    apiAppStateAtStart: safeText(safeState.apiAppStateAtStart, 40),
+    apiAppStateAtFinish: safeText(safeState.apiAppStateAtFinish, 40),
+    apiAppStateChangedDuringRequest:
+      typeof safeState.apiAppStateChangedDuringRequest === 'boolean'
+        ? safeState.apiAppStateChangedDuringRequest
+        : null,
+    apiBackgroundedDuringRequest:
+      typeof safeState.apiBackgroundedDuringRequest === 'boolean'
+        ? safeState.apiBackgroundedDuringRequest
+        : null,
+    apiStartedInBackground:
+      typeof safeState.apiStartedInBackground === 'boolean'
+        ? safeState.apiStartedInBackground
+        : null,
   };
 };
 
@@ -235,7 +249,21 @@ const socketContextFromEvent = (plain, metrics = null, state = null) => {
     socketConnectMsIgnored: safeNumber(safeState.socketConnectMsIgnored),
     socketSessionAgeMs: safeNumber(safeMetrics.socketSessionAgeMs),
     socketReconnectMs: safeNumber(safeMetrics.socketReconnectMs),
+    socketReconnectMsIgnored: safeNumber(safeState.socketReconnectMsIgnored),
     socketDisconnectedForMs: safeNumber(safeMetrics.socketDisconnectedForMs),
+    socketDisconnectedForMsIgnored: safeNumber(safeState.socketDisconnectedForMsIgnored),
+    socketBackgroundedDuringDisconnect:
+      typeof safeState.socketBackgroundedDuringDisconnect === 'boolean'
+        ? safeState.socketBackgroundedDuringDisconnect
+        : null,
+    socketAppStateAtDisconnect: safeText(safeState.socketAppStateAtDisconnect, 40),
+    socketAppStateAtReconnect: safeText(
+      safeState.socketAppStateAtReconnect ||
+        safeState.socketAppStateAtReconnectAttempt ||
+        safeState.socketAppStateAtReconnectError ||
+        safeState.socketAppStateAtReconnectFailed,
+      40
+    ),
   };
 };
 
@@ -487,6 +515,9 @@ const buildTelemetrySummary = (events, apiPerformance = null) => {
           disconnectedCount: 0,
           unreachableCount: 0,
           expensiveCount: 0,
+          apiStartedInBackgroundCount: 0,
+          apiBackgroundedDuringRequestCount: 0,
+          apiAppStateChangedDuringRequestCount: 0,
           diagnosticsVersions: new Set(),
           devices: new Set(),
           users: new Set(),
@@ -517,6 +548,9 @@ const buildTelemetrySummary = (events, apiPerformance = null) => {
         if (networkContext.isConnected === false) row.disconnectedCount += 1;
         if (networkContext.isInternetReachable === false) row.unreachableCount += 1;
         if (networkContext.isConnectionExpensive === true) row.expensiveCount += 1;
+        if (networkContext.apiStartedInBackground === true) row.apiStartedInBackgroundCount += 1;
+        if (networkContext.apiBackgroundedDuringRequest === true) row.apiBackgroundedDuringRequestCount += 1;
+        if (networkContext.apiAppStateChangedDuringRequest === true) row.apiAppStateChangedDuringRequestCount += 1;
         if (diagnosticsSchemaVersion != null) row.diagnosticsVersions.add(diagnosticsSchemaVersion);
         if (plain.deviceId) row.devices.add(plain.deviceId);
         if (plain.userId) row.users.add(plain.userId);
@@ -611,6 +645,9 @@ const buildTelemetrySummary = (events, apiPerformance = null) => {
         disconnectedCount: row.disconnectedCount,
         unreachableCount: row.unreachableCount,
         expensiveConnectionCount: row.expensiveCount,
+        apiStartedInBackgroundCount: row.apiStartedInBackgroundCount,
+        apiBackgroundedDuringRequestCount: row.apiBackgroundedDuringRequestCount,
+        apiAppStateChangedDuringRequestCount: row.apiAppStateChangedDuringRequestCount,
         serverDurationSource: hasMobileServerSamples ? 'mobile-header' : (hasBackendFallback ? 'backend-session' : null),
         devices: row.devices.size,
         users: row.users.size,
@@ -812,7 +849,17 @@ const buildPeriodApiExport = (events) => {
         socketConnectMsIgnored: socketContext.socketConnectMsIgnored,
         socketSessionAgeMs: socketContext.socketSessionAgeMs,
         socketReconnectMs: socketContext.socketReconnectMs,
+        socketReconnectMsIgnored: socketContext.socketReconnectMsIgnored,
         socketDisconnectedForMs: socketContext.socketDisconnectedForMs,
+        socketDisconnectedForMsIgnored: socketContext.socketDisconnectedForMsIgnored,
+        socketBackgroundedDuringDisconnect: socketContext.socketBackgroundedDuringDisconnect,
+        socketAppStateAtDisconnect: socketContext.socketAppStateAtDisconnect,
+        socketAppStateAtReconnect: socketContext.socketAppStateAtReconnect,
+        apiAppStateAtStart: networkContext.apiAppStateAtStart,
+        apiAppStateAtFinish: networkContext.apiAppStateAtFinish,
+        apiAppStateChangedDuringRequest: networkContext.apiAppStateChangedDuringRequest,
+        apiBackgroundedDuringRequest: networkContext.apiBackgroundedDuringRequest,
+        apiStartedInBackground: networkContext.apiStartedInBackground,
         occurredAt,
       });
     }
@@ -849,7 +896,12 @@ const buildPeriodApiExport = (events) => {
         socketConnectMsIgnored: socketContext.socketConnectMsIgnored,
         socketSessionAgeMs: socketContext.socketSessionAgeMs,
         socketReconnectMs: socketContext.socketReconnectMs,
+        socketReconnectMsIgnored: socketContext.socketReconnectMsIgnored,
         socketDisconnectedForMs: socketContext.socketDisconnectedForMs,
+        socketDisconnectedForMsIgnored: socketContext.socketDisconnectedForMsIgnored,
+        socketBackgroundedDuringDisconnect: socketContext.socketBackgroundedDuringDisconnect,
+        socketAppStateAtDisconnect: socketContext.socketAppStateAtDisconnect,
+        socketAppStateAtReconnect: socketContext.socketAppStateAtReconnect,
         occurredAt,
       });
     }
@@ -879,6 +931,9 @@ const buildPeriodApiExport = (events) => {
       disconnectedCount: 0,
       unreachableCount: 0,
       expensiveCount: 0,
+      apiStartedInBackgroundCount: 0,
+      apiBackgroundedDuringRequestCount: 0,
+      apiAppStateChangedDuringRequestCount: 0,
       devices: new Set(),
       users: new Set(),
       statuses: new Set(),
@@ -909,6 +964,9 @@ const buildPeriodApiExport = (events) => {
     if (networkContext.isConnected === false) row.disconnectedCount += 1;
     if (networkContext.isInternetReachable === false) row.unreachableCount += 1;
     if (networkContext.isConnectionExpensive === true) row.expensiveCount += 1;
+    if (networkContext.apiStartedInBackground === true) row.apiStartedInBackgroundCount += 1;
+    if (networkContext.apiBackgroundedDuringRequest === true) row.apiBackgroundedDuringRequestCount += 1;
+    if (networkContext.apiAppStateChangedDuringRequest === true) row.apiAppStateChangedDuringRequestCount += 1;
     if (apiStatus != null) row.statuses.add(apiStatus);
     if (diagnosticsSchemaVersion != null) row.diagnosticsVersions.add(diagnosticsSchemaVersion);
     if (plain.deviceId) row.devices.add(plain.deviceId);
@@ -966,6 +1024,9 @@ const buildPeriodApiExport = (events) => {
         disconnectedCount: row.disconnectedCount,
         unreachableCount: row.unreachableCount,
         expensiveConnectionCount: row.expensiveCount,
+        apiStartedInBackgroundCount: row.apiStartedInBackgroundCount,
+        apiBackgroundedDuringRequestCount: row.apiBackgroundedDuringRequestCount,
+        apiAppStateChangedDuringRequestCount: row.apiAppStateChangedDuringRequestCount,
         devices: row.devices.size,
         users: row.users.size,
         statuses: Array.from(row.statuses).sort((a, b) => a - b),
@@ -1318,6 +1379,7 @@ router.get('/mobile-diagnostics/export', auth, requireInternalAdmin, async (req,
         'Queue wait - ожидание клиентского лимитера безопасных API-запросов.',
         'Diag 6 добавляет networkTypes, appStates, cellularGenerations, carriers и net flags для отличия backend тормозов от проблем сети/VPN.',
         'Diag 7 добавляет socketEvents: reason, transport, reconnect duration, connect errors и fallback details.',
+        'Diag 8 добавляет apiBackgroundedDuringRequest и socketBackgroundedDuringDisconnect, чтобы отделять реальные задержки от сна/background телефона.',
       ],
     };
 

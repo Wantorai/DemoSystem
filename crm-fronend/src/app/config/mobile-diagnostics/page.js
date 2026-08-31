@@ -114,6 +114,20 @@ const networkFlags = (row) => {
   return flags.length ? flags.join(', ') : '-';
 };
 
+const backgroundRequestFlags = (row) => {
+  const flags = [];
+  if (Number(row.apiStartedInBackgroundCount || 0) > 0) {
+    flags.push(`started-bg: ${numberFormat.format(row.apiStartedInBackgroundCount)}`);
+  }
+  if (Number(row.apiBackgroundedDuringRequestCount || 0) > 0) {
+    flags.push(`bg-during: ${numberFormat.format(row.apiBackgroundedDuringRequestCount)}`);
+  }
+  if (Number(row.apiAppStateChangedDuringRequestCount || 0) > 0) {
+    flags.push(`state-change: ${numberFormat.format(row.apiAppStateChangedDuringRequestCount)}`);
+  }
+  return flags.length ? flags.join(', ') : '-';
+};
+
 const backendDebugText = (backend) => {
   if (!backend) return 'pid=-; route=-';
   return [
@@ -377,6 +391,16 @@ export default function MobileDiagnosticsPage() {
             >
               <Download size={16} />
               Diag 7 1д
+            </button>
+            <button
+              type="button"
+              onClick={() => downloadExport({ days: 1, bucket: 'hour', minDiagVersion: 8 })}
+              disabled={refreshing}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-800 transition hover:bg-slate-50 disabled:opacity-60"
+              title="Скачать диагностику за последние 24 часа только по событиям Diag 8+ с признаками background/resume"
+            >
+              <Download size={16} />
+              Diag 8 1д
             </button>
           </div>
         </div>
@@ -652,7 +676,7 @@ export default function MobileDiagnosticsPage() {
               <Activity size={18} className="text-slate-500" />
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[1640px] text-left text-sm">
+              <table className="w-full min-w-[1740px] text-left text-sm">
                 <thead className="bg-slate-50 text-xs uppercase text-slate-500">
                   <tr>
                     <Th tip="Какое мобильное приложение прислало медленные события.">Клиент</Th>
@@ -670,6 +694,7 @@ export default function MobileDiagnosticsPage() {
                     <Th tip="Сколько запрос в среднем ждал клиентского лимитера перед отправкой в сеть. Требует Diag 4.">Queue avg</Th>
                     <Th tip="Тип сети по NetInfo в медленных событиях: wifi, cellular, none, unknown. Требует Diag 6 для точных данных.">Network</Th>
                     <Th tip="Состояние приложения во время события: active, background или inactive. Требует Diag 6 для точных данных.">App state</Th>
+                    <Th tip="Diag 8: сколько медленных запросов стартовали в фоне, пережили background/inactive или смену AppState. Такие задержки часто не являются реальным ожиданием пользователя.">Bg req</Th>
                     <Th tip="Флаги проблем сети: offline = isConnected=false, no-internet = isInternetReachable=false, expensive = дорогая/мобильная сеть по NetInfo.">Net flags</Th>
                     <Th tip="mobile-header: server-duration пришел прямо с мобильного события. backend-session: сопоставлено с in-memory backend статистикой.">Server source</Th>
                     <Th tip="Самый медленный клиентский замер в группе.">Client max</Th>
@@ -702,6 +727,9 @@ export default function MobileDiagnosticsPage() {
                       <td className="max-w-[160px] truncate px-4 py-3 text-xs" title={compactObject(row.appStates, 8)}>
                         {compactObject(row.appStates)}
                       </td>
+                      <td className="max-w-[220px] truncate px-4 py-3 text-xs" title={backgroundRequestFlags(row)}>
+                        {backgroundRequestFlags(row)}
+                      </td>
                       <td className="max-w-[220px] truncate px-4 py-3 text-xs" title={networkFlags(row)}>
                         {networkFlags(row)}
                       </td>
@@ -714,7 +742,7 @@ export default function MobileDiagnosticsPage() {
                   ))}
                   {!slowApiEndpoints.length ? (
                     <tr>
-                      <td className="px-4 py-6 text-slate-500" colSpan={21}>
+                      <td className="px-4 py-6 text-slate-500" colSpan={22}>
                         Медленных API-событий за последний час нет
                       </td>
                     </tr>

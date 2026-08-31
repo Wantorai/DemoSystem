@@ -26,14 +26,20 @@ export default function ForwardToRoomModal({
     let cancelled = false;
     const headers = { Accept: 'application/json' };
     if (token) headers.Authorization = `Bearer ${token}`;
-    fetch(`${apiBase}/web/rooms`, {
-      method: 'GET',
-      headers,
-      credentials: token ? 'omit' : 'include',
-    })
-      .then(async (response) => {
-        const data = await response.json().catch(() => []);
-        if (!response.ok) throw new Error(data?.error || data?.message || 'Не удалось загрузить чаты');
+    Promise.all([
+      ['room', '/web/rooms'],
+      ['boss', '/web/boss/chats'],
+      ['max', '/max/chats'],
+      ['telegram', '/telegram/chats'],
+    ].map(async ([kind, path]) => {
+      const response = await fetch(`${apiBase}${path}`, { method: 'GET', headers, credentials: token ? 'omit' : 'include' });
+      if (!response.ok) return [];
+      const data = await response.json().catch(() => []);
+      const rows = Array.isArray(data) ? data : (Array.isArray(data?.chats) ? data.chats : []);
+      return rows.map((room) => ({ ...room, forwardKind: kind }));
+    }))
+      .then((groups) => {
+        const data = groups.flat();
         if (!cancelled) {
           setRooms(Array.isArray(data) ? data : []);
           setErrorByRequestKey((current) => ({ ...current, [activeRequestKey]: '' }));
@@ -63,8 +69,8 @@ export default function ForwardToRoomModal({
     const needle = query.trim().toLowerCase();
     return (rooms || [])
       .filter((room) => {
-        const id = String(room?.id ?? room?.rawId ?? '').replace(/^room-/, '');
-        return Number(id) > 0;
+        const id = String(room?.rawId ?? room?.id ?? '').replace(/^(room-|boss-|max-|telegram-)/, '');
+        return id.length > 0;
       })
       .filter((room) => {
         if (!needle) return true;
@@ -153,12 +159,13 @@ export default function ForwardToRoomModal({
             <div style={{ padding: 20, color: '#6b7280', textAlign: 'center' }}>Чаты не найдены</div>
           ) : (
             filteredRooms.map((room) => {
-              const roomId = Number(String(room?.id ?? room?.rawId ?? '').replace(/^room-/, ''));
+              const rawId = String(room?.rawId ?? room?.id ?? '').replace(/^(room-|boss-|max-|telegram-)/, '');
+              const roomId = Number(rawId);
               const label = room?.title || room?.name || room?.partnerName || `Room #${roomId}`;
-              const meta = room?.roomType === 'personal' ? 'Личный чат' : 'Группа';
+              const meta = room?.forwardKind === 'telegram' ? 'Telegram' : room?.forwardKind === 'max' ? 'MAX' : room?.forwardKind === 'boss' ? 'Админ-чат' : room?.roomType === 'personal' ? 'Личный чат' : 'Группа';
               return (
                 <button
-                  key={`forward-room-${roomId}`}
+                  key={`forward-${room?.forwardKind || 'room'}-${rawId}`}
                   type="button"
                   disabled={actionBusy}
                   onMouseDown={(event) => {
@@ -170,7 +177,7 @@ export default function ForwardToRoomModal({
                     if (!Number.isFinite(roomId) || roomId <= 0 || actionBusy) return;
                     setSelectingRoomId(roomId);
                     try {
-                      await onSelectRoom({ ...room, id: roomId });
+                      await onSelectRoom({ ...room, id: rawId, forwardKind: room?.forwardKind || 'room' });
                     } finally {
                       setSelectingRoomId(null);
                     }

@@ -888,6 +888,97 @@ const createMessage = async (req, res) => {
 
 
 
+const FORWARD_BATCH_LIMIT = 50;
+
+function normalizeForwardBatchId(value) {
+  const clean = String(value || '').trim().replace(/[^a-zA-Z0-9:_-]/g, '').slice(0, 96);
+  return clean || `forward-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function invokeCreateRoomMessage(req) {
+  return new Promise((resolve, reject) => {
+    let statusCode = 200;
+    let settled = false;
+    const finish = (payload) => {
+      if (settled) return payload;
+      settled = true;
+      if (statusCode >= 400) {
+        const error = new Error(payload?.message || payload?.error || 'Не удалось переслать сообщение');
+        error.status = statusCode;
+        error.payload = payload;
+        reject(error);
+      } else {
+        resolve(payload);
+      }
+      return payload;
+    };
+    const response = {
+      status(code) { statusCode = Number(code) || 500; return this; },
+      json: finish,
+      send: finish,
+    };
+    Promise.resolve(createMessage(req, response)).catch(reject);
+  });
+}
+
+// Both mobile and web use this endpoint. Every forwarded item passes through
+// createMessage, preserving its access checks, socket/push delivery, bridge
+// relays and clientId idempotency.
+const forwardMessages = async (req, res) => {
+  const input = Array.isArray(req.body?.messages) ? req.body.messages : [];
+  if (input.length < 1 || input.length > FORWARD_BATCH_LIMIT) {
+    return res.status(400).json({
+      message: `Выберите от 1 до ${FORWARD_BATCH_LIMIT} сообщений`,
+      code: 'FORWARD_BATCH_INVALID',
+    });
+  }
+
+  const batchId = normalizeForwardBatchId(req.body?.batchId);
+  const created = [];
+  try {
+    for (let index = 0; index < input.length; index += 1) {
+      const item = input[index] || {};
+      const content = typeof item.content === 'string' ? item.content : '';
+      const mediaUrl = String(item.mediaUrl || '').trim();
+      if (!content.trim() && !mediaUrl) {
+        const error = new Error('В выбранном сообщении нет текста или файла');
+        error.status = 400;
+        error.payload = { code: 'FORWARD_ITEM_EMPTY', index };
+        throw error;
+      }
+      const forwarded = await invokeCreateRoomMessage({
+        ...req,
+        params: { ...req.params, roomId: req.params.roomId },
+        body: {
+          content,
+          type: String(item.type || (mediaUrl ? 'file' : 'text')).slice(0, 40),
+          mediaUrl: mediaUrl || null,
+          thumbnailUrl: String(item.thumbnailUrl || '').trim() || null,
+          fileName: String(item.fileName || '').trim() || null,
+          fileSize: Number.isFinite(Number(item.fileSize)) ? Number(item.fileSize) : null,
+          duration: Number.isFinite(Number(item.duration)) ? Number(item.duration) : null,
+          mediaMimeType: String(item.mediaMimeType || item.mimeType || '').trim() || null,
+          clientId: `${batchId}-${index}`,
+          deliveryStatus: 'sent',
+          socketId: req.body?.socketId || null,
+          socketIds: Array.isArray(req.body?.socketIds) ? req.body.socketIds : [],
+        },
+      });
+      created.push(forwarded);
+    }
+    return res.json({ batchId, messages: created });
+  } catch (error) {
+    console.error('[room:forward] failed:', error?.message || error);
+    return res.status(error?.status || 500).json({
+      message: error?.message || 'Не удалось переслать сообщения',
+      code: error?.payload?.code || 'FORWARD_BATCH_FAILED',
+      index: error?.payload?.index ?? created.length,
+      batchId,
+      createdCount: created.length,
+    });
+  }
+};
+
 // Вариант getMessages с beforeId/offset support (PATCH)
 const getMessagesForWeb = async (req, res) => {
   try {
@@ -1218,4 +1309,4 @@ async function searchWebMessages(req, res) {
     return res.status(500).json({ message: 'Server error' });
   }
 }
-module.exports = { getMessages, createMessage, getMessagesForWeb, updateRoomMessage, toggleRoomMessageReaction, searchWebMessages };
+module.exports = { getMessages, createMessage, forwardMessages, getMessagesForWeb, updateRoomMessage, toggleRoomMessageReaction, searchWebMessages };

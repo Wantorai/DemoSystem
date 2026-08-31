@@ -1,7 +1,7 @@
 // routes/roomMessagesRoutes.js
 const express = require('express');
 const router = express.Router();
-const { getMessages, createMessage, getMessagesForWeb, updateRoomMessage, toggleRoomMessageReaction, searchWebMessages } = require('../controllers/roomMessageController');
+const { getMessages, createMessage, forwardMessages, getMessagesForWeb, updateRoomMessage, toggleRoomMessageReaction, searchWebMessages } = require('../controllers/roomMessageController');
 const authMiddleware = require('../middleware/authMiddleware');
 
 // GET /admin/rooms/:roomId/messages
@@ -9,6 +9,9 @@ router.get('/admin/rooms/:roomId/messages', authMiddleware, getMessages);
 
 // POST /admin/rooms/:roomId/messages
 router.post('/admin/rooms/:roomId/messages', authMiddleware, createMessage);
+
+// POST /admin/rooms/:roomId/messages/forward
+router.post('/admin/rooms/:roomId/messages/forward', authMiddleware, forwardMessages);
 
 // GET /web/messages/search
 router.get('/web/messages/search', authMiddleware, searchWebMessages);

@@ -10,6 +10,7 @@ import { IoDownloadOutline, IoOpenOutline } from 'react-icons/io5';
 import MessageContextMenu from '@/components/webchats/MessageContextMenu';
 import ForwardToRoomModal from '@/components/webchats/ForwardToRoomModal';
 import { formatChatTime } from '@/components/webchats/dateFormat';
+import DropZone from '@/components/webchats/DropZone';
 
 const REACTION_EMOJIS = ['👍', '❤️', '🔥', '⚡️', '😂', '😢', '😡', '🚀', '🤝', '💪', '💯', '✅', '🆗'];
 
@@ -434,6 +435,13 @@ export default function MaxChatMessages({ internalId, chatInfo, provider = 'max'
     if (msg.messageType) return msg.messageType;
     if (msg.type) return msg.type;
     return 'text';
+  };
+
+  const handleDropFiles = async (files) => {
+    // Send sequentially so provider requests and reply state remain predictable.
+    for (const file of files) {
+      await handleFileUpload(file);
+    }
   };
 
   const getReadableMessageText = useCallback((msg) => String(
@@ -1152,7 +1160,11 @@ export default function MaxChatMessages({ internalId, chatInfo, provider = 'max'
   // console.log('messages = ', messages)
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <DropZone
+      onFiles={handleDropFiles}
+      multiple
+      className="flex h-full min-h-0 flex-col"
+    >
 
 
       {/* Скрытые input'ы для загрузки файлов */}
@@ -1384,7 +1396,7 @@ export default function MaxChatMessages({ internalId, chatInfo, provider = 'max'
             // cancelEdit={cancelEdit} 
         />
 
-    </div>
+    </DropZone>
   );
 }
 

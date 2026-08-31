@@ -44,23 +44,6 @@ function normalizeHexColor(value) {
   return /^[0-9a-f]{6}$/i.test(raw) ? `#${raw.toUpperCase()}` : null;
 }
 
-function safeDecodeFilename(name) {
-  if (!name) return '';
-  try {
-    let s = String(name).replace(/\+/g, ' ');
-    for (let i = 0; i < 3; i += 1) {
-      if (!/%[0-9A-Fa-f]{2}/.test(s)) break;
-      const decoded = decodeURIComponent(s);
-      if (decoded === s) break;
-      s = decoded;
-    }
-    return s;
-  } catch (err) {
-    console.warn(err);
-    return String(name);
-  }
-}
-
 function renderTextWithLinks(value) {
   const source = String(value || '');
   if (!source) return null;
@@ -249,7 +232,9 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
   const [roomParticipantsModalOpen, setRoomParticipantsModalOpen] = useState(false);
   const [roomParticipantsSaving, setRoomParticipantsSaving] = useState(false);
   const [roomExternalParticipants, setRoomExternalParticipants] = useState([]);
-  const [forwardMessageDraft, setForwardMessageDraft] = useState(null);
+  const [forwardSelectionMode, setForwardSelectionMode] = useState(false);
+  const [forwardSelectedIds, setForwardSelectedIds] = useState(() => new Set());
+  const [forwardModalOpen, setForwardModalOpen] = useState(false);
   const [forwardBusy, setForwardBusy] = useState(false);
   const [bossFolderMode, setBossFolderMode] = useState(false);
   const [bossFolders, setBossFolders] = useState([]);
@@ -2154,181 +2139,141 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
       .finally(() => setIsUploading(false));
   }, [API_BASE, id, kind, router, token, user?.id]);
 
-  const getBossFolderCompanionText = useCallback((message) => {
-    const directText = String(getReadableMessageText(message, '') || '').trim();
-    if (directText) return directText;
-
-    const legacyFileText = safeDecodeFilename(String(message?.displayFileName ?? message?.originalFileName ?? message?.fileName ?? '')).trim();
-    if (legacyFileText.includes('|')) return legacyFileText;
-
-    if (kind !== 'boss' || !bossFolderMode) return '';
-    const messageId = Number(message?.id);
-    const messageUserId = Number(message?.userId ?? message?.User?.id ?? message?.user?.id ?? 0);
-    const source = Array.isArray(messages) ? messages : [];
-    const index = source.findIndex((item) => Number(item?.id) === messageId);
-    if (index < 0) return '';
-
-    const offsets = [1, -1, 2, -2];
-    for (const offset of offsets) {
-      const candidate = source[index + offset];
-      if (!candidate) continue;
-      const candidateText = String(getReadableMessageText(candidate, '') || '').trim();
-      if (!candidateText) continue;
-      const candidateHasFile = Boolean(candidate?.mediaUrl || candidate?.media_url || candidate?.fileUrl);
-      if (candidateHasFile) continue;
-      const candidateType = String(candidate?.type || 'text').toLowerCase();
-      if (candidateType !== 'text') continue;
-      const candidateUserId = Number(candidate?.userId ?? candidate?.User?.id ?? candidate?.user?.id ?? 0);
-      if (messageUserId > 0 && candidateUserId > 0 && candidateUserId !== messageUserId) continue;
-      return candidateText;
-    }
-    return '';
-  }, [bossFolderMode, kind, messages]);
-
-  const getForwardFileInfo = useCallback((message) => {
-    if (!message) return null;
-    const mediaUrl = message.mediaUrl || message.media_url || message.fileUrl || '';
-    if (!mediaUrl) return null;
-    const fileName = safeDecodeFilename(
-      message.displayFileName ||
-      message.originalFileName ||
-      message.fileName ||
-      String(mediaUrl).split('?')[0].split('/').pop() ||
-      `forward-${message.id || Date.now()}`
-    );
-    const type = String(message.type || '').toLowerCase();
-    const mime = String(message.mimeType || '').toLowerCase();
-    const name = String(fileName || '').toLowerCase();
-    const messageType =
-      type === 'image' || mime.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/i.test(name) ? 'image'
-      : type === 'video' || mime.startsWith('video/') || /\.(mp4|mov|avi|mkv|webm|m4v|3gp)$/i.test(name) ? 'video'
-      : type === 'audio' || mime.startsWith('audio/') || /\.(mp3|wav|ogg|m4a|aac|flac|opus|webm)$/i.test(name) ? 'audio'
-      : type === 'document' || /\.(pdf|docx?|xlsx?|pptx?|txt|rtf|csv)$/i.test(name) ? 'document'
-      : 'file';
-    return {
-      url: mediaUrl,
-      fileName,
-      mimeType: mime || '',
-      messageType,
-      messageText: getBossFolderCompanionText(message),
-    };
-  }, [getBossFolderCompanionText]);
-
-  const forwardStaticBase = useMemo(() => {
-    const configured = process.env.NEXT_PUBLIC_STATIC_BASE_URL || process.env.NEXT_PUBLIC_STATIC_URL || '';
-    const apiBase = String(API_BASE || '').replace(/\/+$/, '');
-    return String(configured || apiBase.replace(/\/api$/i, '')).replace(/\/+$/, '');
-  }, [API_BASE]);
-
-  const toForwardFetchUrl = useCallback((rawUrl) => {
-    const value = String(rawUrl || '').trim();
-    if (!value) return '';
-    if (/^https?:\/\//i.test(value)) return value;
-    const apiBase = String(API_BASE || '').replace(/\/+$/, '');
-    const normalized = value.startsWith('/') ? value : `/${value.replace(/^\/+/, '')}`;
-    const uploadPath = normalized.replace(/^\/api(?=\/uploads\/)/i, '');
-    if (/^\/uploads\//i.test(uploadPath)) return `${forwardStaticBase}${uploadPath}`;
-    return `${apiBase}${normalized}`;
-  }, [API_BASE, forwardStaticBase]);
-
-  const sendForwardTextToRoom = useCallback(async (targetRoomId, content) => {
-    const trimmed = String(content || '').trim();
-    if (!trimmed) return null;
-    const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
-    if (token) headers.Authorization = `Bearer ${token}`;
-    const response = await fetch(`${API_BASE}/admin/rooms/${encodeURIComponent(String(targetRoomId))}/messages`, {
-      method: 'POST',
-      headers,
-      credentials: token ? 'omit' : 'include',
-      body: JSON.stringify({
-        content: trimmed,
-        type: 'text',
-        roomId: targetRoomId,
-        userId: user?.id,
-      }),
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data?.error || data?.message || 'Не удалось отправить текст');
-    return data;
-  }, [API_BASE, token, user?.id]);
-
-  const sendForwardFileToRoom = useCallback(async (targetRoomId, fileInfo) => {
-    if (!fileInfo?.url) return null;
-    const sourceUrl = toForwardFetchUrl(fileInfo.url);
-    if (!sourceUrl) return null;
-    const sourceHeaders = {};
-    if (token) sourceHeaders.Authorization = `Bearer ${token}`;
-    const sourceResponse = await fetch(sourceUrl, {
-      headers: sourceHeaders,
-      credentials: token ? 'omit' : 'include',
-    });
-    if (!sourceResponse.ok) throw new Error(`Не удалось скачать вложение: ${sourceResponse.status}`);
-    const blob = await sourceResponse.blob();
-    const type = fileInfo.mimeType || blob.type || 'application/octet-stream';
-    const file = new File([blob], fileInfo.fileName || `forward-${Date.now()}`, { type });
-    const fd = new FormData();
-    fd.append('file', file);
-    fd.append('roomId', String(targetRoomId));
-    fd.append('userId', String(user?.id ?? '0'));
-    fd.append('messageType', fileInfo.messageType || 'file');
-    fd.append('type', fileInfo.messageType || 'file');
-    const headers = {};
-    if (token) headers.Authorization = `Bearer ${token}`;
-    const response = await fetch(`${API_BASE}/uploadfiles/fileFromWebchat`, {
-      method: 'POST',
-      headers,
-      credentials: token ? 'omit' : 'include',
-      body: fd,
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data?.error || data?.message || 'Не удалось отправить вложение');
-    return data;
-  }, [API_BASE, toForwardFetchUrl, token, user?.id]);
+  const getForwardMessageKey = useCallback((message) => String(message?.id ?? ''), []);
 
   const openForwardModal = useCallback(({ message }) => {
-    if (!message) return;
-    setForwardMessageDraft(message);
-  }, []);
+    const key = getForwardMessageKey(message);
+    if (!key) return;
+    setForwardSelectedIds(new Set([key]));
+    setForwardSelectionMode(true);
+    setForwardModalOpen(false);
+  }, [getForwardMessageKey]);
+
+  const toggleForwardMessage = useCallback((message) => {
+    const key = getForwardMessageKey(message);
+    if (!key) return;
+    setForwardSelectedIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(key)) next.delete(key);
+      else if (next.size < 50) next.add(key);
+      else toast.info('Можно переслать не более 50 сообщений');
+      return next;
+    });
+  }, [getForwardMessageKey]);
+
+  const cancelForwardSelection = useCallback(() => {
+    if (forwardBusy) return;
+    setForwardModalOpen(false);
+    setForwardSelectionMode(false);
+    setForwardSelectedIds(new Set());
+  }, [forwardBusy]);
 
   const closeForwardModal = useCallback(() => {
-    if (!forwardBusy) setForwardMessageDraft(null);
+    if (!forwardBusy) setForwardModalOpen(false);
   }, [forwardBusy]);
 
   const forwardDraftToRoom = useCallback(async (room) => {
-    const targetRoomId = Number(String(room?.id ?? room?.rawId ?? '').replace(/^room-/, ''));
-    if (!Number.isFinite(targetRoomId) || targetRoomId <= 0) {
+    const targetKind = String(room?.forwardKind || 'room').toLowerCase();
+    const targetId = String(room?.id ?? room?.rawId ?? '').replace(/^(room-|boss-|max-|telegram-)/, '');
+    const targetRoomId = Number(targetId);
+    if (!targetId || (targetKind === 'room' && (!Number.isFinite(targetRoomId) || targetRoomId <= 0))) {
       toast.error('Не удалось определить чат получателя');
       return;
     }
-    if (!forwardMessageDraft) {
-      toast.error('Не удалось определить сообщение для пересылки');
-      return;
-    }
-    const textPayload = getReadableMessageText(forwardMessageDraft, '');
-    const fileInfo = getForwardFileInfo(forwardMessageDraft);
-    if (!textPayload && !fileInfo) {
-      toast.info('Нечего пересылать');
+    const selectedMessages = messages
+      .filter((message) => forwardSelectedIds.has(getForwardMessageKey(message)))
+      .slice()
+      .sort((left, right) => new Date(left?.createdAt || 0) - new Date(right?.createdAt || 0));
+    if (!selectedMessages.length) {
+      toast.error('Выберите сообщения для пересылки');
       return;
     }
     try {
       setForwardBusy(true);
-      toast.info('Пересылаю сообщение...');
-      if (fileInfo) {
-        await sendForwardFileToRoom(targetRoomId, fileInfo);
-        const companionText = String(fileInfo.messageText || '').trim();
-        if (companionText) await sendForwardTextToRoom(targetRoomId, companionText);
-      } else if (textPayload) {
-        await sendForwardTextToRoom(targetRoomId, textPayload);
+      const headers = {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      };
+      const snapshots = selectedMessages.map((message) => ({
+        content: String(message?.content ?? getReadableMessageText(message, '') ?? ''),
+        type: String(message?.type || (message?.mediaUrl ? 'file' : 'text')),
+        mediaUrl: message?.mediaUrl || message?.media_url || message?.fileUrl || null,
+        thumbnailUrl: message?.thumbnailUrl || null,
+        fileName: message?.displayFileName || message?.originalFileName || message?.fileName || null,
+        fileSize: message?.fileSize ?? message?.size ?? null,
+        duration: message?.duration ?? null,
+        mediaMimeType: message?.mediaMimeType || message?.mimeType || null,
+      }));
+      if (targetKind === 'room') {
+      const response = await fetch(`${API_BASE}/admin/rooms/${encodeURIComponent(String(targetRoomId))}/messages/forward`, {
+        method: 'POST',
+        headers,
+        credentials: token ? 'omit' : 'include',
+        body: JSON.stringify({
+          batchId: `web-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
+          messages: snapshots,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.message || payload?.error || 'Не удалось переслать сообщения');
+      } else {
+        for (const snapshot of snapshots) {
+          const content = String(snapshot.content || '').trim();
+          if (content) {
+            const textUrl = targetKind === 'boss'
+              ? `${API_BASE}/admin/boss/chats/${encodeURIComponent(targetId)}/messages`
+              : `${API_BASE}/${targetKind}/chats/${encodeURIComponent(targetId)}/send`;
+            const textResponse = await fetch(textUrl, {
+              method: 'POST', headers, credentials: token ? 'omit' : 'include',
+              body: JSON.stringify(targetKind === 'boss' ? { content, type: 'text' } : { text: content, type: 'text', senderName: user?.name, senderId: user?.id }),
+            });
+            if (!textResponse.ok) throw new Error('Не удалось переслать текст');
+          }
+          if (snapshot.mediaUrl) {
+            const rawSourceUrl = String(snapshot.mediaUrl);
+            const sourceUrl = /^https?:\/\//i.test(rawSourceUrl)
+              ? rawSourceUrl
+              : `${String(API_BASE || '').replace(/\/api\/?$/i, '').replace(/\/$/, '')}/${rawSourceUrl.replace(/^\//, '')}`;
+            const sourceResponse = await fetch(sourceUrl, { credentials: 'omit' });
+            if (!sourceResponse.ok) throw new Error('Не удалось получить вложение');
+            const blob = await sourceResponse.blob();
+            const mime = snapshot.mediaMimeType || blob.type || 'application/octet-stream';
+            const file = new File([blob], snapshot.fileName || `forward-${Date.now()}`, { type: mime });
+            const form = new FormData();
+            let uploadUrl = `${API_BASE}/uploadfiles/fileFromWebchat`;
+            let field = 'file';
+            if (targetKind === 'boss') {
+              form.append('chatId', targetId);
+              form.append('userId', String(user?.id ?? '0'));
+              form.append('messageType', snapshot.type || 'file');
+              form.append('type', snapshot.type || 'file');
+            } else {
+              if (mime.startsWith('image/')) field = 'image';
+              else if (mime.startsWith('video/')) field = 'video';
+              else if (mime.startsWith('audio/')) field = 'audio';
+              const endpoint = field === 'file' ? 'send-file' : `send-${field}`;
+              uploadUrl = `${API_BASE}/${targetKind}/chats/${encodeURIComponent(targetId)}/${endpoint}`;
+              form.append('senderName', user?.name || '');
+              form.append('senderId', String(user?.id ?? ''));
+            }
+            form.append(field, file);
+            const uploadResponse = await fetch(uploadUrl, { method: 'POST', headers: token ? { Authorization: `Bearer ${token}` } : {}, credentials: token ? 'omit' : 'include', body: form });
+            if (!uploadResponse.ok) throw new Error('Не удалось переслать вложение');
+          }
+        }
       }
-      toast.success('Сообщение переслано');
-      setForwardMessageDraft(null);
+      toast.success(selectedMessages.length === 1 ? 'Сообщение переслано' : `Переслано сообщений: ${selectedMessages.length}`);
+      setForwardModalOpen(false);
+      setForwardSelectionMode(false);
+      setForwardSelectedIds(new Set());
     } catch (error) {
       console.error('forward to room failed', error);
       toast.error(error?.message || 'Не удалось переслать сообщение');
     } finally {
       setForwardBusy(false);
     }
-  }, [forwardMessageDraft, getForwardFileInfo, sendForwardFileToRoom, sendForwardTextToRoom]);
+  }, [API_BASE, forwardSelectedIds, getForwardMessageKey, messages, token, user?.id, user?.name]);
 
   // 2) onFile для ChatFooter (вызывается with File)
   const onFile = async (file) => {
@@ -3820,6 +3765,9 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
                         outgoingBubbleColor={outgoingBubbleColor}
                         onReply={handleReply}
                         onForward={openForwardModal}
+                        forwardSelectionMode={forwardSelectionMode}
+                        selectedForForward={forwardSelectedIds.has(getForwardMessageKey(m))}
+                        onToggleForwardSelection={toggleForwardMessage}
                         onDelete={handleDelete}
                         onToggleReaction={toggleMessageReaction}
                         reactionEmojis={REACTION_EMOJIS}
@@ -3920,6 +3868,9 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
                                 outgoingBubbleColor={outgoingBubbleColor}
                                 onReply={handleReply}
                                 onForward={openForwardModal}
+                                forwardSelectionMode={forwardSelectionMode}
+                                selectedForForward={forwardSelectedIds.has(getForwardMessageKey(msg))}
+                                onToggleForwardSelection={toggleForwardMessage}
                                 onToggleReaction={toggleMessageReaction}
                                 reactionEmojis={REACTION_EMOJIS}
                                 audioPlaybackRate={audioPlaybackRate}
@@ -3993,11 +3944,37 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
               else setRoomExternalParticipants((prev) => (Array.isArray(prev) ? prev : []).filter((item) => Number(item?.id || 0) !== Number(participantId)));
             }}
           />
+          {forwardSelectionMode && (
+            <div className="fixed inset-x-0 bottom-0 z-[80] flex items-center justify-center gap-4 border-t border-gray-200 bg-white px-4 py-3 shadow-[0_-8px_24px_rgba(0,0,0,0.12)]">
+              <button
+                type="button"
+                onClick={cancelForwardSelection}
+                disabled={forwardBusy}
+                className="flex h-11 w-11 items-center justify-center rounded-full text-gray-600 hover:bg-gray-100 disabled:opacity-50"
+                aria-label="Отменить выбор"
+              >
+                <span aria-hidden="true" style={{ display: 'block', fontSize: 32, lineHeight: '30px', fontWeight: 400, color: '#475569' }}>×</span>
+              </button>
+              <div className="min-w-28 text-center text-sm font-semibold text-gray-800">
+                Выбрано: {forwardSelectedIds.size}
+              </div>
+              <button
+                type="button"
+                onClick={() => setForwardModalOpen(true)}
+                disabled={forwardBusy || forwardSelectedIds.size === 0}
+                className="flex h-11 w-11 items-center justify-center rounded-full bg-blue-600 text-white hover:bg-blue-700 disabled:bg-gray-300"
+                aria-label="Переслать выбранные сообщения"
+              >
+                <span aria-hidden="true" style={{ display: 'block', fontSize: 25, lineHeight: '25px', fontWeight: 700, color: '#ffffff', transform: 'translateX(1px)' }}>➤</span>
+              </button>
+            </div>
+          )}
           <ForwardToRoomModal
-            visible={Boolean(forwardMessageDraft)}
+            visible={forwardModalOpen}
             apiBase={API_BASE}
             token={token}
             busy={forwardBusy}
+            title={`Переслать (${forwardSelectedIds.size})`}
             onClose={closeForwardModal}
             onSelectRoom={forwardDraftToRoom}
           />
@@ -4018,6 +3995,7 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
 
 function MessageItem({ message, messagesById = {}, isFresh = false, onSeenFresh = null, messageStatus, currentUserId, currentChatKind = null, currentChatId = null, onReply = null,
   onForward = null, onOpenPinned = null, onTogglePin = null, onToggleReaction = null, reactionEmojis = [],
+  forwardSelectionMode = false, selectedForForward = false, onToggleForwardSelection = null,
   audioPlaybackRate = 1.0, onCycleAudioSpeed = null,
   outgoingBubbleColor = OUTGOING_BUBBLE_COLOR_DEFAULT,
   isPinned = false, isPinnedMine = true, userById, onDelete = null, onEdit = null }) {
@@ -4787,17 +4765,49 @@ function MessageItem({ message, messagesById = {}, isFresh = false, onSeenFresh 
       onContextMenuCapture={onContextMenu}
       onContextMenu={onContextMenu}
       onClick={() => {
+        if (forwardSelectionMode && typeof onToggleForwardSelection === 'function') {
+          onToggleForwardSelection(message);
+          return;
+        }
         if (isFresh && typeof onSeenFresh === 'function' && message?.id) {
           onSeenFresh(message.id);
         }
       }}
-      className={`flex items-end gap-3 my-2 ${isMine ? 'justify-end' : 'justify-start'}`}
+      className={`relative flex items-end gap-3 my-2 ${forwardSelectionMode ? 'pl-11' : ''} ${isMine ? 'justify-end' : 'justify-start'}`}
       data-message-id={message.id}
       data-chat-kind={kind || ''}
       data-room-id={roomId ?? ''}
       data-chat-id={chatId ?? ''}
       id={message.id ? `msg-${message.id}` : undefined}
     >
+
+      {forwardSelectionMode && (
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggleForwardSelection?.(message);
+          }}
+          className="absolute flex h-7 w-7 items-center justify-center rounded-full border-2"
+          style={{
+            left: 4,
+            top: '50%',
+            transform: 'translateY(-50%)',
+            zIndex: 3,
+            minWidth: 28,
+            minHeight: 28,
+            padding: 0,
+            margin: 0,
+            borderColor: selectedForForward ? '#2563eb' : '#94a3b8',
+            backgroundColor: selectedForForward ? '#2563eb' : '#ffffff',
+            color: selectedForForward ? '#ffffff' : 'transparent',
+          }}
+          aria-label={selectedForForward ? 'Убрать сообщение из выбранных' : 'Выбрать сообщение'}
+          aria-pressed={selectedForForward}
+        >
+          <span aria-hidden="true" style={{ display: 'block', fontSize: 19, lineHeight: '19px', fontWeight: 900, color: selectedForForward ? '#ffffff' : 'transparent' }}>✓</span>
+        </button>
+      )}
 
       {/* если нужно показывать аватар слева для чужих — можно вставить здесь */}
       {!isMine && (() => {
