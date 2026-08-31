@@ -13,8 +13,13 @@ included.
 
 - `crm-fronend` — Next.js web application.
 - `crm-backend` — REST API, Socket.IO server and background workers.
+<<<<<<< HEAD
 - `filespace-desktop` — desktop client with S3 file storage synchronitation.
 - `socdep-api` — api for mobile app for deploy content in social how Telegram, VK.
+=======
+- `filespace-desktop` — desktop client packaging project.
+- `socdep-api` — a social deploy application.
+>>>>>>> 8e0fe66185551663d0c9c7a9d89623f05636f484
 - `docs` — project documentation.
 
 ## Local setup
