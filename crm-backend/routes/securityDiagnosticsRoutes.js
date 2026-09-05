@@ -46,7 +46,7 @@ const whereFromQuery = (query, from, to) => {
   return where;
 };
 
-router.use(auth, requireSecurityAdmin);
+router.use('/security-diagnostics', auth, requireSecurityAdmin);
 
 router.get('/security-diagnostics/summary', async (req, res) => {
   try {
