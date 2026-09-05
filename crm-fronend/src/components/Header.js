@@ -15,7 +15,7 @@ import useUnreadSupportTickets from '../hooks/useUnreadSupportTickets';
 
 const Header = () => {
   const { user, token, logout, initialized, permissions: routePermissions } = useContext(AuthContext);
-  const unreadTicketCount = useUnreadSupportTickets(token);
+  const unreadTicketCount = useUnreadSupportTickets(token, user);
   const [allowedPermissionIds, setAllowedPermissionIds] = useState(new Set()); // Разрешенные permissionId
   const [permissionMap, setPermissionMap] = useState(new Map()); // Сопоставление resource → permissionId
   const [roleId, setRoleId] = useState(null);

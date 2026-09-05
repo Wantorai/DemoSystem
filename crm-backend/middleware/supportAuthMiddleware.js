@@ -31,16 +31,15 @@ const supportAuthMiddleware = async (req, res, next) => {
       return res.status(403).json({ error: 'Некорректный токен' });
     }
 
-    const providedName = String(req.headers['x-support-user-name'] || '').trim();
-    let localUser = null;
-    if (!providedName) {
-      localUser = await User.findByPk(userId, { attributes: ['id', 'name', 'roleId'] });
+    const localUser = await User.findByPk(userId, { attributes: ['id', 'name', 'roleId'] });
+    if (!localUser) {
+      return res.status(401).json({ error: 'Пользователь не найден' });
     }
 
     req.user = {
       id: userId,
-      name: providedName || localUser?.name || `Пользователь ${userId}`,
-      roleId: Number(decoded.roleId ?? localUser?.roleId ?? 0),
+      name: localUser.name || `Пользователь ${userId}`,
+      roleId: Number(localUser.roleId ?? decoded.roleId ?? 0),
     };
     next();
   } catch (_error) {

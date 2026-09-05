@@ -15,11 +15,13 @@ const isSupportAdminHost = () => {
   );
 };
 
-export default function useUnreadSupportTickets(token) {
+export default function useUnreadSupportTickets(token, user) {
   const [count, setCount] = useState(0);
+  const roleId = Number(user?.roleId);
+  const canManageSupportTickets = roleId === 1 || roleId === 2;
 
   const refresh = useCallback(async () => {
-    if (!token || !isSupportAdminHost()) {
+    if (!token || !canManageSupportTickets || !isSupportAdminHost()) {
       setCount(0);
       return;
     }
@@ -39,7 +41,7 @@ export default function useUnreadSupportTickets(token) {
     } catch {
       setCount(0);
     }
-  }, [token]);
+  }, [canManageSupportTickets, token]);
 
   useEffect(() => {
     const initialRefresh = window.setTimeout(refresh, 0);

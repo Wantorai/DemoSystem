@@ -67,7 +67,6 @@ export default function SupportTicketPanel() {
       const response = await fetch(`${apiBase}/support/tickets/my`, {
         headers: {
           Authorization: `Bearer ${token}`,
-          'x-support-user-name': user?.name || '',
           'x-support-source': supportSource,
         },
         cache: 'no-store',
@@ -79,7 +78,7 @@ export default function SupportTicketPanel() {
     } finally {
       setListLoading(false);
     }
-  }, [apiBase, supportSource, token, user?.name]);
+  }, [apiBase, supportSource, token]);
 
   useEffect(() => {
     void loadTickets();
@@ -106,7 +105,6 @@ export default function SupportTicketPanel() {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
-          'x-support-user-name': user?.name || '',
           'x-support-source': supportSource,
         },
         body,

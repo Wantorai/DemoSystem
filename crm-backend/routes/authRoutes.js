@@ -2,10 +2,33 @@ const express = require('express');
 const fs = require('fs');
 const multer = require('multer');
 const path = require('path');
+const rateLimit = require('express-rate-limit');
 const { login, logout, me, loginMobApp, checkStatus, uploadAvatar, deleteAvatar } = require('../controllers/authController');
 const authMiddleware = require('../middleware/authMiddleware');
 const db = require('../models');
 const User = db.sequelize.models.User;
+const { recordSecurityEventSafe } = require('../services/securityEventService');
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  handler: (req, res) => {
+    recordSecurityEventSafe({
+      req,
+      eventType: 'login_rate_limited',
+      severity: 'critical',
+      statusCode: 429,
+      username: req.body?.username || req.body?.phone,
+      details: { windowMinutes: 15, limit: 10 },
+      throttleKey: `login-limit:${req.ip}`,
+      throttleMs: 60 * 1000,
+    });
+    return res.status(429).json({ error: 'Слишком много попыток входа. Повторите через 15 минут' });
+  },
+});
 
 const router = express.Router();
 const avatarDir = path.join(process.cwd(), 'uploads', 'avatars');
@@ -31,7 +54,7 @@ const avatarUpload = multer({
   },
 });
 
-router.post('/login', login);
+router.post('/login', loginLimiter, login);
 router.post('/logout', authMiddleware, logout);
 router.get('/me', authMiddleware, me);
 router.post('/me/avatar', authMiddleware, avatarUpload.single('avatar'), uploadAvatar);
@@ -42,7 +65,7 @@ router.get('/users', authMiddleware, async (req, res) => {
   res.json(users);
 });
 
-router.post('/loginMobApp', loginMobApp); // для мобильного приложения
+router.post('/loginMobApp', loginLimiter, loginMobApp); // для мобильного приложения
 router.get('/check-status', authMiddleware, checkStatus); // для мобильного приложения
 
 module.exports = router;

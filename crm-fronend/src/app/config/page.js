@@ -23,7 +23,8 @@ const configuredSupportHost = getConfiguredSupportHost();
 const AllConfig = () => {
   const [links, setLinks] = useState([]);
   const { user, token } = useContext(AuthContext);
-  const unreadTicketCount = useUnreadSupportTickets(token);
+  const unreadTicketCount = useUnreadSupportTickets(token, user);
+  const isSecurityAdmin = [1, 2].includes(Number(user?.roleId));
   const [sys, setSys] = useState(null);
   const [sysError, setSysError] = useState(null); // для ошибок
   const isMainSupportHost = useSyncExternalStore(
@@ -171,6 +172,14 @@ const AllConfig = () => {
                 {unreadTicketCount > 99 ? '99+' : unreadTicketCount}
               </span>
             )}
+          </Link>
+        </div>}
+        {isMainSupportHost && isSecurityAdmin && <div className="mb-4">
+          <Link
+            href="/config/security-diagnostics"
+            className="block px-6 py-3 bg-amber-700 text-white font-semibold rounded hover:bg-amber-800 transition duration-200"
+          >
+            Диагностика безопасности
           </Link>
         </div>}
         {isMainSupportHost && <div className="mb-4">

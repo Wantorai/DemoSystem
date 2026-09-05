@@ -27,6 +27,7 @@ const {
   isUserOnline,
 } = require('./services/mobileDiagnosticsRuntime');
 const { apiPerformanceMiddleware } = require('./services/apiPerformanceRuntime');
+const { recordSecurityEventSafe } = require('./services/securityEventService');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -119,6 +120,22 @@ app.set('trust proxy', 1);
 
 
 // --- MIDDLEWARES ---
+app.use((req, _res, next) => {
+  const origin = String(req.headers.origin || '').trim().replace(/\/+$/, '');
+  if (origin && !corsOrigins.includes(origin)) {
+    const sourceIp = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim();
+    recordSecurityEventSafe({
+      req,
+      eventType: 'unexpected_origin',
+      severity: 'warning',
+      details: { corsBlocked: true },
+      throttleKey: `origin:${sourceIp}:${origin}:${req.method}:${String(req.path || '').slice(0, 200)}`,
+      throttleMs: 5 * 60 * 1000,
+    });
+  }
+  next();
+});
+
 // Добавляем middleware для обработки JSON
 app.use(express.json());  // Это важно для парсинга тела запроса как JSON
 // Для Express < 4.16
@@ -130,7 +147,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use(cors({
     origin: corsOrigins,
     methods: ['GET','POST','PUT','DELETE','OPTIONS', 'PATCH'],
-    allowedHeaders: ['Content-Type','Authorization','x-support-user-name','x-support-source'],
+    allowedHeaders: ['Content-Type','Authorization','x-support-source'],
     exposedHeaders: ['x-api-duration-ms'],
 }));
 app.use(apiPerformanceMiddleware);
@@ -461,6 +478,8 @@ const connectionSpeedRoutes = require('./routes/connectionSpeedRoutes');
 app.use('/api', connectionSpeedRoutes);
 const mobileDiagnosticsRoutes = require('./routes/mobileDiagnosticsRoutes');
 app.use('/api', mobileDiagnosticsRoutes);
+const securityDiagnosticsRoutes = require('./routes/securityDiagnosticsRoutes');
+app.use('/api', securityDiagnosticsRoutes);
 
 
 // // Для эмита из воркера в клиент

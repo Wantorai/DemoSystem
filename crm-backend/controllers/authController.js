@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const path = require('path');
 const db = require('../models');
 const User = db.sequelize.models.User;
+const { recordSecurityEventSafe } = require('../services/securityEventService');
 // const Employee = db.sequelize.models.Employee;
 require('dotenv').config();
 
@@ -51,12 +52,26 @@ const login = async (req, res) => {
     // Проверяем, существует ли пользователь
     const user = await User.findOne({ where: { name: username } });
     if (!user) {
+      recordSecurityEventSafe({
+        req,
+        eventType: 'login_failed',
+        statusCode: 401,
+        username,
+        details: { reason: 'invalid_credentials' },
+      });
       return res.status(401).json({ error: "Неверное имя пользователя или пароль" });
     }
 
     // Проверяем пароль
     const validPassword = await bcrypt.compare(password, user.password);
     if (!validPassword) {
+      recordSecurityEventSafe({
+        req,
+        eventType: 'login_failed',
+        statusCode: 401,
+        username,
+        details: { reason: 'invalid_credentials' },
+      });
       return res.status(401).json({ error: "Неверное имя пользователя или пароль" });
     }
 

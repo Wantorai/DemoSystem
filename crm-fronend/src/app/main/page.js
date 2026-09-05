@@ -864,6 +864,7 @@ const Calendar = () => {
   useEffect(() => {
     // Находим заказы, которые нужно «допилить» в бэке
     const toSync = orders.filter(order =>
+      order.data?.sborkaDate &&
       Number(order.data.sborkaDays) > 0 &&
       !order.data.sborkaEndDate // ещё не записана
     );
@@ -874,15 +875,15 @@ const Calendar = () => {
       const updatedOrders = [];
 
       for (const order of toSync) {
-        // Вычисляем дату окончания сборки
-        const sEndDate = calculateEndDateForSborka(
-          order.data.sborkaDate,
-          Number(order.data.sborkaDays),
-          order.data.workOnWeekendConfig,
-          holidayConfigs.map(h => h.date)
-        );
-
         try {
+          // Вычисляем дату окончания сборки
+          const sEndDate = calculateEndDateForSborka(
+            order.data.sborkaDate,
+            Number(order.data.sborkaDays),
+            order.data.workOnWeekendConfig,
+            holidayConfigs.map(h => h.date)
+          );
+
           const response = await fetch(
             `${process.env.NEXT_PUBLIC_API_URL}/orders/${order.id}`,
             {
@@ -924,7 +925,9 @@ const Calendar = () => {
       }
     }
 
-    syncSborkaDates();
+    void syncSborkaDates().catch((error) => {
+      console.error("Ошибка синхронизации дат сборки:", error);
+    });
   }, [orders, holidayConfigs]);
 
 
