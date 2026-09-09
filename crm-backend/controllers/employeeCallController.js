@@ -1,6 +1,7 @@
 const db = require('../models');
 const { getIO } = require('../socket');
 const { sendPushNotification } = require('../services/sendPushNotification');
+const { isUserOnline } = require('../services/mobileDiagnosticsRuntime');
 const {
   answerCall,
   assertLiveKitConfigured,
@@ -8,8 +9,11 @@ const {
   createParticipantToken,
   finishCall,
   getActiveCallForUser,
+  getCallReachabilityToken,
   getCallForUser,
+  markCallReachable,
   selectLiveKitProvider,
+  waitForCallReachability,
 } = require('../services/employeeCallService');
 
 const Room = db.sequelize.models.Room;
@@ -24,7 +28,7 @@ const emitToParticipants = (call, event, extra = {}) => {
   io.to(`user:${call.callee.id}`).emit(event, payload);
 };
 
-const sendCallEventPush = async (call, action, targetIds) => {
+const sendCallEventPush = async (call, action, targetIds, extraData = {}) => {
   if (!call) return;
   const targets = targetIds || [call.caller.id, call.callee.id];
   const data = {
@@ -37,6 +41,7 @@ const sendCallEventPush = async (call, action, targetIds) => {
     expiresAt: call.expiresAt,
     status: call.status,
     mediaType: call.mediaType || 'audio',
+    ...extraData,
   };
   const commonOptions = {
     disableUnifiedParallel: true,
@@ -83,6 +88,12 @@ const announceEndedCall = (call) => {
 const fail = (res, error) => {
   const code = String(error?.code || '');
   if (code === 'CALL_BUSY') return res.status(409).json({ error: 'Пользователь уже разговаривает', code });
+  if (code === 'CALL_UNREACHABLE') {
+    return res.status(409).json({
+      error: 'Абонент сейчас не в сети или его интернет-соединение недоступно',
+      code,
+    });
+  }
   if (code === 'LIVEKIT_NOT_CONFIGURED') return res.status(503).json({ error: 'Сервис звонков ещё не настроен', code });
   if (['CALL_NOT_FOUND', 'CALL_NOT_AVAILABLE', 'CALL_ENDED'].includes(code)) {
     return res.status(410).json({ error: 'Звонок уже завершён или недоступен', code });
@@ -135,13 +146,78 @@ const startCall = async (req, res) => {
       onTimeout: announceEndedCall,
     });
 
+    const configuredBaseUrl = String(
+      process.env.CALL_REACHABILITY_PUBLIC_BASE_URL || ''
+    ).replace(/\/+$/, '');
+    const forwardedProto = String(req.get('x-forwarded-proto') || '')
+      .split(',')[0]
+      .trim();
+    const publicBaseUrl =
+      configuredBaseUrl ||
+      `${forwardedProto || req.protocol}://${req.get('host')}/api`;
+    const reachabilityToken = getCallReachabilityToken(call.callId);
+    const reachabilityUrl = reachabilityToken
+      ? `${publicBaseUrl}/calls/${encodeURIComponent(call.callId)}/native-reachable?token=${encodeURIComponent(reachabilityToken)}`
+      : '';
+
+    // Preserve compatibility with clients that are already connected to our
+    // Socket.IO server. A sleeping/swiped Android client has no socket and
+    // must prove delivery through the signed native acknowledgement below.
+    if (isUserOnline(call.callee.id)) {
+      markCallReachable(call.callId, { userId: call.callee.id });
+    }
+
     emitToParticipants(call, 'call:incoming');
-    sendCallEventPush(call, 'incoming', [call.callee.id]);
+    sendCallEventPush(call, 'incoming', [call.callee.id], {
+      reachabilityUrl,
+    });
+
+    const requireReachability =
+      String(process.env.CALL_REACHABILITY_REQUIRED || 'true').toLowerCase() !== 'false';
+    if (requireReachability) {
+      const timeoutMs = Math.max(
+        2500,
+        Number(process.env.CALL_REACHABILITY_TIMEOUT_MS || 6500)
+      );
+      const reachable = await waitForCallReachability(call.callId, timeoutMs);
+      if (!reachable) {
+        const ended = finishCall(
+          call.callId,
+          'failed',
+          'callee_unreachable',
+          req.user.id
+        );
+        if (ended) announceEndedCall(ended);
+        const error = new Error('Callee is unreachable');
+        error.code = 'CALL_UNREACHABLE';
+        throw error;
+      }
+    }
 
     return res.status(201).json(call);
   } catch (error) {
     return fail(res, error);
   }
+};
+
+const acknowledgeReachability = (req, res) => {
+  const acknowledged = markCallReachable(req.params.callId, {
+    userId: req.user.id,
+  });
+  if (!acknowledged) {
+    return res.status(410).json({ error: 'Звонок уже завершён или недоступен' });
+  }
+  return res.status(204).end();
+};
+
+const acknowledgeNativeReachability = (req, res) => {
+  const acknowledged = markCallReachable(req.params.callId, {
+    token: req.query?.token,
+  });
+  if (!acknowledged) {
+    return res.status(410).json({ error: 'Звонок уже завершён или недоступен' });
+  }
+  return res.status(204).end();
 };
 
 const getActiveCall = (req, res) => {
@@ -212,6 +288,8 @@ const tokenForCall = async (req, res) => {
 };
 
 module.exports = {
+  acknowledgeNativeReachability,
+  acknowledgeReachability,
   acceptCall,
   endCall,
   getActiveCall,

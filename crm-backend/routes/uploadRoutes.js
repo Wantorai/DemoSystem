@@ -22,6 +22,12 @@ const chatTraceLog = (...args) => {
   if (CHAT_TRACE_LOGS) console.log(...args);
 };
 
+try {
+  ffmpeg.setFfmpegPath(require('ffmpeg-static'));
+} catch (error) {
+  console.warn('ffmpeg-static not available, using system ffmpeg if present:', error?.message || error);
+}
+
 // Конфигурация хранения файлов
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {

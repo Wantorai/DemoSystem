@@ -1,4 +1,4 @@
-const { randomUUID } = require('crypto');
+const { randomUUID, timingSafeEqual } = require('crypto');
 const axios = require('axios');
 const { AccessToken, TrackSource } = require('livekit-server-sdk');
 
@@ -21,6 +21,12 @@ const PROVIDER_HEALTH_CACHE_MS = Math.max(
 const calls = new Map();
 const activeCallByUserId = new Map();
 const providerHealthCache = new Map();
+
+const resolveReachabilityWaiters = (call, reachable) => {
+  if (!call?.reachabilityWaiters) return;
+  for (const resolve of call.reachabilityWaiters) resolve(Boolean(reachable));
+  call.reachabilityWaiters.clear();
+};
 
 const readProviderConfig = (provider) => {
   const selfHosted = provider === LIVEKIT_PROVIDER_SELF_HOSTED;
@@ -151,6 +157,7 @@ const publicCall = (call) => ({
 const clearCall = (call) => {
   if (!call) return;
   if (call.timeout) clearTimeout(call.timeout);
+  resolveReachabilityWaiters(call, false);
   if (activeCallByUserId.get(call.caller.id) === call.callId) {
     activeCallByUserId.delete(call.caller.id);
   }
@@ -219,6 +226,9 @@ const createCall = ({
         ? LIVEKIT_PROVIDER_SELF_HOSTED
         : LIVEKIT_PROVIDER_CLOUD,
     timeout: null,
+    reachabilityToken: randomUUID(),
+    reachableAt: null,
+    reachabilityWaiters: new Set(),
   };
   call.timeout = setTimeout(() => {
     const ended = finishCall(call.callId, 'missed', 'timeout', 0);
@@ -230,6 +240,48 @@ const createCall = ({
   activeCallByUserId.set(callerId, callId);
   activeCallByUserId.set(calleeId, callId);
   return publicCall(call);
+};
+
+const getCallReachabilityToken = (callId) => {
+  const call = calls.get(String(callId));
+  return call?.status === 'ringing' ? call.reachabilityToken : null;
+};
+
+const safeTokenEquals = (actual, expected) => {
+  const left = Buffer.from(String(actual || ''));
+  const right = Buffer.from(String(expected || ''));
+  return left.length === right.length && timingSafeEqual(left, right);
+};
+
+const markCallReachable = (callId, { token, userId } = {}) => {
+  const call = calls.get(String(callId));
+  if (!call || call.status !== 'ringing') return false;
+  const authenticatedCallee =
+    Number(userId) > 0 && Number(userId) === Number(call.callee.id);
+  const validNativeToken = safeTokenEquals(token, call.reachabilityToken);
+  if (!authenticatedCallee && !validNativeToken) return false;
+  if (!call.reachableAt) call.reachableAt = new Date().toISOString();
+  resolveReachabilityWaiters(call, true);
+  return true;
+};
+
+const waitForCallReachability = (callId, timeoutMs) => {
+  const call = calls.get(String(callId));
+  if (!call || call.status !== 'ringing') return Promise.resolve(false);
+  if (call.reachableAt) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      call.reachabilityWaiters.delete(finish);
+      resolve(Boolean(value));
+    };
+    const timer = setTimeout(() => finish(false), Math.max(1000, Number(timeoutMs) || 6000));
+    timer.unref?.();
+    call.reachabilityWaiters.add(finish);
+  });
 };
 
 const getCallForUser = (callId, userId) => {
@@ -320,6 +372,9 @@ module.exports = {
   createParticipantToken,
   finishCall,
   getActiveCallForUser,
+  getCallReachabilityToken,
   getCallForUser,
+  markCallReachable,
   selectLiveKitProvider,
+  waitForCallReachability,
 };

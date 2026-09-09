@@ -1,14 +1,15 @@
 // components/webchats/ChatCard.js
 'use client';
-import React, { useCallback } from 'react';
+import React, { useCallback, useContext, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   IoImageOutline, IoAttachOutline, IoVideocamOutline,
   IoDocumentOutline, IoMicOutline, IoMusicalNoteOutline, IoPeopleOutline,
-  IoShieldCheckmarkOutline, IoAlertCircleOutline
+  IoShieldCheckmarkOutline, IoAlertCircleOutline, IoCheckmark, IoCheckmarkDone, IoTimeOutline, IoPin
 } from 'react-icons/io5';
 import ChatAvatar from './ChatAvatar';
 import { formatChatTimeOrDate } from './dateFormat';
+import { AuthContext } from '../../context/AuthContext';
 
 const AVATAR_DEBUG = false;
 const avatarDebug = (event, payload) => {
@@ -19,6 +20,7 @@ const avatarDebug = (event, payload) => {
 };
 
 export default function ChatCard({ chat, lastMessage, isActive = false, onContextMenu = null, isPinned = false, isImportant = false, titleAction = null }) {
+  const { user } = useContext(AuthContext);
   const router = useRouter();
   const bg = isActive ? '#007AFF' : 'white';
   const leftBorder = isActive ? '4px solid #060606ff' : '4px solid transparent';
@@ -51,6 +53,10 @@ export default function ChatCard({ chat, lastMessage, isActive = false, onContex
     if (!msg) return null;
 
     const type = msg.type ?? "text";
+    const isDeleted = type === 'deleted' || msg.isDeleted || msg.is_deleted || msg.deletedAt || msg.deleted_at;
+    if (isDeleted) {
+      return <span style={{ color: lastMsgColor, fontStyle: 'italic' }}>Сообщение удалено</span>;
+    }
     const text =
       msg.content ?? msg.transcriptionText ?? msg.text ?? msg.body ?? "";
     const fileName = msg.fileName ?? "";
@@ -137,11 +143,29 @@ export default function ChatCard({ chat, lastMessage, isActive = false, onContex
   //console.log('author = ', author)
 
   const timePart = formatTimeOrWeekday(lastMessageTime ?? updatedAt);
+  const lastSenderId = lastMessage?.userId ?? lastMessage?.User?.id ?? null;
+  const isLastMessageMine = lastSenderId != null && String(lastSenderId) === String(user?.id ?? '');
+  const lastMessageStatus = String(chat?.lastMessageStatus || lastMessage?.readStatus || lastMessage?.deliveryStatus || '').toLowerCase();
+  const renderLastMessageStatus = () => {
+    if (!isLastMessageMine || !lastMessageStatus) return null;
+    if (lastMessageStatus === 'sending' || lastMessageStatus === 'pending') {
+      return <IoTimeOutline title="Отправляется" size={16} color={timeColor} />;
+    }
+    if (lastMessageStatus === 'read') {
+      return <IoCheckmarkDone title="Прочитано" size={17} color={isActive ? '#fff' : '#2c44f9'} />;
+    }
+    if (lastMessageStatus === 'delivered') {
+      return <IoCheckmarkDone title="Доставлено" size={17} color={timeColor} />;
+    }
+    return <IoCheckmark title="Отправлено" size={17} color={timeColor} />;
+  };
   const isGroupRoom = kind === 'room' && String(chat?.roomType || '').toLowerCase() !== 'personal';
   const isBossChat = kind === 'boss';
 
   const routeId = String(rawId ?? id ?? '').replace(/^(?:room-|boss-)/, '');
   const avatarUrl = chat.partnerAvatar || chat.avatarUrl || chat.avatar || null;
+  const avatarColor = chat.partnerAvatarColor || chat.avatarColor || null;
+  const avatarColorSeed = chat.partnerId ?? chat.userId ?? rawId;
   avatarDebug('render', {
     kind,
     id,
@@ -153,8 +177,47 @@ export default function ChatCard({ chat, lastMessage, isActive = false, onContex
     avatarUrl,
   });
   const href = `/webchats/${encodeURIComponent(kind)}/${encodeURIComponent(routeId)}`;
+  const longPressRef = useRef(null);
+  const suppressNextClickRef = useRef(false);
+
+  const cancelLongPress = useCallback(() => {
+    if (!longPressRef.current) return;
+    clearTimeout(longPressRef.current.timer);
+    longPressRef.current = null;
+  }, []);
+
+  const handlePointerDown = useCallback((event) => {
+    if (!onContextMenu || event.pointerType === 'mouse') return;
+    cancelLongPress();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const timer = window.setTimeout(() => {
+      longPressRef.current = null;
+      suppressNextClickRef.current = true;
+      window.setTimeout(() => { suppressNextClickRef.current = false; }, 1000);
+      onContextMenu({
+        clientX: startX,
+        clientY: startY,
+        preventDefault() {},
+        stopPropagation() {},
+      });
+    }, 500);
+    longPressRef.current = { timer, startX, startY };
+  }, [cancelLongPress, onContextMenu]);
+
+  const handlePointerMove = useCallback((event) => {
+    const pending = longPressRef.current;
+    if (!pending) return;
+    if (Math.abs(event.clientX - pending.startX) > 10 || Math.abs(event.clientY - pending.startY) > 10) {
+      cancelLongPress();
+    }
+  }, [cancelLongPress]);
 
   const onActivate = useCallback(() => {
+    if (suppressNextClickRef.current) {
+      suppressNextClickRef.current = false;
+      return;
+    }
     try {
       localStorage.setItem('orderSpace:lastChat', JSON.stringify({ kind, rawId: routeId }));
     } catch (e) {
@@ -165,14 +228,19 @@ export default function ChatCard({ chat, lastMessage, isActive = false, onContex
 
   return (
     <div
+      className={`webchat-card ${isPinned ? 'webchat-card-pinned' : ''} ${isActive ? 'webchat-card-active' : ''}`}
       role="button"
       tabIndex={0}
       onClick={onActivate}
       onContextMenu={onContextMenu || undefined}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={cancelLongPress}
+      onPointerCancel={cancelLongPress}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onActivate(); } }}
       aria-current={isActive ? 'true' : undefined}
       style={{
-        padding: 12,
+        padding: '15px 12px',
         borderBottom: '1px solid #f5f5f5',
         cursor: 'pointer',
         display: 'flex',
@@ -184,11 +252,18 @@ export default function ChatCard({ chat, lastMessage, isActive = false, onContex
       }}
       aria-label={`Открыть чат ${title}`}
     >
-      <ChatAvatar title={title} avatarUrl={avatarUrl} size={44} borderRadius={8} />
+      <ChatAvatar
+        title={title}
+        avatarUrl={avatarUrl}
+        avatarColor={avatarColor}
+        colorSeed={avatarColorSeed}
+        size={44}
+        borderRadius={999}
+      />
 
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <div style={{ display: 'flex', alignItems: 'center', overflow: 'hidden', marginRight: 12 }}>
+      <div className="webchat-card-content" style={{ flex: 1, minWidth: 0 }}>
+        <div className="webchat-card-heading-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div className="webchat-card-title-area" style={{ display: 'flex', alignItems: 'center', overflow: 'hidden', marginRight: 12 }}>
             {isGroupRoom && (
               <span style={{ position: 'relative', flexShrink: 0, width: 20, height: 16, marginRight: 6, display: 'inline-flex', alignItems: 'center' }}>
                 <IoPeopleOutline size={18} color={iconAccent} />
@@ -196,6 +271,7 @@ export default function ChatCard({ chat, lastMessage, isActive = false, onContex
               </span>
             )}
             <strong
+              className="webchat-card-title"
               style={{
                 fontSize: 14,
                 textOverflow: 'ellipsis',
@@ -212,33 +288,40 @@ export default function ChatCard({ chat, lastMessage, isActive = false, onContex
               </span>
             ) : null}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 8, flexShrink: 0 }}>
-            {isPinned && (
-              <span title="Закрепленный чат" style={{ fontSize: 14, lineHeight: 1 }}>
-                📌
-              </span>
-            )}
-            {isBossChat && (
-              <IoShieldCheckmarkOutline
-                title="Админ чат"
-                size={15}
-                color={isActive ? '#fff' : '#7c3aed'}
-                style={{ flexShrink: 0 }}
-              />
-            )}
-            {isImportant && (
-              <IoAlertCircleOutline
-                title="Отмеченный чат"
-                size={16}
-                color={isActive ? '#fff' : '#f59e0b'}
-                style={{ flexShrink: 0 }}
-              />
-            )}
-            <div style={{ fontSize: 12, color: timeColor }}>{timePart}</div>
+          <div className="webchat-card-meta" style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 8, flexShrink: 0 }}>
+            <div className="webchat-card-indicators" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              {renderLastMessageStatus()}
+              {isPinned && (
+                <IoPin
+                  title="Закрепленный чат"
+                  aria-label="Закрепленный чат"
+                  size={16}
+                  color={isActive ? '#ffffff' : '#dc2626'}
+                  style={{ flexShrink: 0 }}
+                />
+              )}
+              {isBossChat && (
+                <IoShieldCheckmarkOutline
+                  title="Админ чат"
+                  size={15}
+                  color={isActive ? '#fff' : '#7c3aed'}
+                  style={{ flexShrink: 0 }}
+                />
+              )}
+              {isImportant && (
+                <IoAlertCircleOutline
+                  title="Отмеченный чат"
+                  size={16}
+                  color={isActive ? '#fff' : '#f59e0b'}
+                  style={{ flexShrink: 0 }}
+                />
+              )}
+            </div>
+            <div className="webchat-card-time" style={{ fontSize: 12, color: timeColor }}>{timePart}</div>
           </div>
         </div>
 
-        <div style={{
+        <div className="webchat-card-preview" style={{
           color: lastMsgColor,
           marginTop: 6,
           maxWidth: '100%',
@@ -249,17 +332,21 @@ export default function ChatCard({ chat, lastMessage, isActive = false, onContex
           justifyContent: 'space-between',
           alignItems: 'center'
         }}>
-          {last && (
-            <div style={{ fontSize: 13, color: lastMsgColor }}>
-              <span style={{ display: 'inline-block', verticalAlign: 'middle', marginRight: 6, fontWeight: 600, color: lastMsgColor }}>
-                {author}:
-              </span>
+          <div className="webchat-card-preview-text" style={{ fontSize: 13, color: lastMsgColor }}>
+            {last && (
+              <>
+              {author ? (
+                <span style={{ display: 'inline-block', verticalAlign: 'middle', marginRight: 6, fontWeight: 600, color: lastMsgColor }}>
+                  {author}:
+                </span>
+              ) : null}
               {last}
-            </div>
-          )}
+              </>
+            )}
+          </div>
 
           {unread > 0 && (
-            <div style={{
+            <div className="webchat-card-unread" style={{
               marginLeft: 8,
               background: '#ff3b30',
               color: 'white',

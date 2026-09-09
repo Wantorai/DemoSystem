@@ -10,7 +10,7 @@ import Image from 'next/image';
  *  - borderRadius: number (px), default 8
  *  - avatarUrl: string | null
  */
-export default function ChatAvatar({ title = '', size = 44, borderRadius = 8, avatarUrl = null }) {
+export default function ChatAvatar({ title = '', size = 44, borderRadius = 999, avatarUrl = null, avatarColor = null, colorSeed = null }) {
   const str = String(title || '').trim();
   const resolvedAvatarUrl = resolveMediaUrl(avatarUrl);
   avatarDebug('render', {
@@ -20,16 +20,10 @@ export default function ChatAvatar({ title = '', size = 44, borderRadius = 8, av
     hasImage: Boolean(resolvedAvatarUrl),
   });
 
-  // Получаем 2 буквы: либо первые буквы двух слов, либо первые два символа слова
+  // В компактном списке используем одну букву, как в мобильном приложении.
   const getInitials = (s) => {
     if (!s) return 'C';
-    const words = s.split(/\s+/).filter(Boolean);
-    if (words.length >= 2) {
-      return (words[0][0] + words[1][0]).toUpperCase();
-    }
-    const t = words[0];
-    if (!t) return 'C';
-    return t.slice(0, 2).toUpperCase();
+    return Array.from(s.trim())[0]?.toUpperCase() || 'C';
   };
 
   // Детеминированный хэш -> hue (0..359)
@@ -43,10 +37,10 @@ export default function ChatAvatar({ title = '', size = 44, borderRadius = 8, av
   };
 
   // Генерация приятного, неяркого HSL цвета по строке
-  const hue = stringToHue(str || 'chat');
-  const saturation = 36; // % — умеренная насыщенность (неярко)
-  const lightness = 46;  // % — достаточно тёмный, чтобы белый текст читался хорошо
-  const bg = `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+  const mobileColors = ['#e57373', '#64b5f6', '#81c784', '#ffb74d', '#9575cd', '#4db6ac'];
+  const seed = String(colorSeed ?? str ?? 'chat');
+  const hue = stringToHue(seed);
+  const bg = avatarColor || mobileColors[hue % mobileColors.length];
 
   const initials = getInitials(str);
 
@@ -76,6 +70,7 @@ export default function ChatAvatar({ title = '', size = 44, borderRadius = 8, av
 
   return (
     <div
+      className="webchat-avatar"
       aria-hidden="true"
       title={str || 'Chat'}
       style={outerStyle}

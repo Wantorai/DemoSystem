@@ -1,6 +1,6 @@
 // crm-fronend\src\app\webchats\[kind]\[id]\page.js
 'use client';
-import React, { useEffect, useRef, useState, useContext, useCallback, useMemo } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState, useContext, useCallback, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { SocketProvider, useWebSocket } from '@/components/webchats/SocketProvider';
 import { AuthContext } from '../../../../context/AuthContext';
@@ -9,13 +9,13 @@ import RoomParticipantsModal from '@/components/webchats/RoomParticipantsModal';
 import ChatFooter from '@/components/webchats/ChatFooter';
 import ChatAvatar from '@/components/webchats/ChatAvatar';
 import {
-  IoDocumentTextOutline, IoDocumentAttachSharp, IoArrowDownCircleOutline, IoImageOutline, IoAttachOutline, IoVideocamOutline, 
+  IoDocumentTextOutline, IoDocumentAttachSharp, IoArrowDownCircleOutline, IoImageOutline, IoAttachOutline, IoVideocamOutline,
   IoDocumentOutline, IoMicOutline, IoMusicalNoteOutline, IoTimeOutline, IoCheckmark, IoCheckmarkDone,
   IoFolderOpenOutline, IoListOutline, IoChevronBack, IoChevronDown, IoChevronUp, IoTrendingDown, IoTrendingUp,
   IoChatbubbleEllipsesOutline, IoPeopleOutline, IoPaperPlaneOutline, IoBusinessOutline, IoPinOutline,
   IoSearchOutline, IoCloseOutline, IoPeopleCircleOutline
 } from 'react-icons/io5';
-import Spinner from "../../../../components/Spinner";
+import Spinner from '../../../../components/Spinner';
 import { toast } from 'react-toastify';
 import Image from 'next/image';
 import MessageContextMenu from '@/components/webchats/MessageContextMenu'; 
@@ -26,6 +26,7 @@ import DropZone from '@/components/webchats/DropZone';
 import { showNotification } from '@/components/webchats/notifications';
 import CrossChatEntry from '@/components/webchats/CrossChatEntry';
 import AllPinsView from '@/components/webchats/AllPinsView';
+import WebchatFontScaleControl from '@/components/webchats/WebchatFontScaleControl';
 import { formatChatDateTime, formatChatTime, formatChatTimeOrDate } from '@/components/webchats/dateFormat';
 import { FaTelegramPlane } from 'react-icons/fa';
 // import ChatLayout from '@/components/webchats/ChatLayout';
@@ -38,6 +39,40 @@ import { FaTelegramPlane } from 'react-icons/fa';
 const REACTION_EMOJIS = ['👍', '❤️', '🔥', '⚡️', '😂', '😢', '😡', '🚀', '🤝', '💪', '💯', '✅', '🆗'];
 const AUDIO_SPEED_OPTIONS = [1.0, 1.25, 1.5];
 const OUTGOING_BUBBLE_COLOR_DEFAULT = '#FEF0D1';
+const INITIAL_MESSAGES_LIMIT = 30;
+const CHAT_MESSAGES_CACHE_VERSION = 1;
+const CHAT_MESSAGES_CACHE_MAX_AGE_MS = 30 * 60 * 1000;
+function chatMessagesCacheKey(userId, kind, id) {
+  return `webchats:messages:v${CHAT_MESSAGES_CACHE_VERSION}:${String(userId)}:${String(kind)}:${String(id)}`;
+}
+
+function readChatMessagesCache(userId, kind, id) {
+  if (typeof window === 'undefined' || !userId || !kind || !id) return null;
+  try {
+    const raw = sessionStorage.getItem(chatMessagesCacheKey(userId, kind, id));
+    const cached = raw ? JSON.parse(raw) : null;
+    if (!cached || !Array.isArray(cached.messages)) return null;
+    if (!Number.isFinite(cached.savedAt) || Date.now() - cached.savedAt > CHAT_MESSAGES_CACHE_MAX_AGE_MS) {
+      sessionStorage.removeItem(chatMessagesCacheKey(userId, kind, id));
+      return null;
+    }
+    return cached.messages.slice(-INITIAL_MESSAGES_LIMIT);
+  } catch {
+    return null;
+  }
+}
+
+function writeChatMessagesCache(userId, kind, id, messages) {
+  if (typeof window === 'undefined' || !userId || !kind || !id || !Array.isArray(messages)) return;
+  try {
+    sessionStorage.setItem(chatMessagesCacheKey(userId, kind, id), JSON.stringify({
+      savedAt: Date.now(),
+      messages: messages.slice(-INITIAL_MESSAGES_LIMIT),
+    }));
+  } catch {
+    // Cache is an optional acceleration; storage limits must not break the chat.
+  }
+}
 
 function normalizeHexColor(value) {
   const raw = String(value ?? '').trim().replace(/^#/, '');
@@ -220,14 +255,22 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
   const { user, token, isLoading: authLoading } = useContext(AuthContext);
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [initialScrollReady, setInitialScrollReady] = useState(false);
+  const initialScrollReadyRef = useRef(false);
+  const stabilizedChatRef = useRef('');
+  const historySyncedChatRef = useRef('');
+  const loadedMessagesChatRef = useRef('');
   const [error, setError] = useState(null);
   const [sending, setSending] = useState(false);
   const [text, setText] = useState('');
+  const textRef = useRef('');
+  useEffect(() => { textRef.current = text; }, [text]);
   const bottomRef = useRef(null);
   const [isUploading, setIsUploading] = useState(false);
   const [chatName, setChatName] = useState('');
   const [chatUsers, setChatUsers] = useState([]); 
   const [roomChatType, setRoomChatType] = useState(null);
+  const [roomPartnerName, setRoomPartnerName] = useState('');
   const [roomCreatorUserId, setRoomCreatorUserId] = useState(null);
   const [roomParticipantsModalOpen, setRoomParticipantsModalOpen] = useState(false);
   const [roomParticipantsSaving, setRoomParticipantsSaving] = useState(false);
@@ -244,13 +287,16 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
   const [outgoingBubbleColor, setOutgoingBubbleColor] = useState(OUTGOING_BUBBLE_COLOR_DEFAULT);
   const PAGE_LIMIT = 90; // 
   const containerRef = useRef(null);      // Элемент с overflow:auto — прокрутчик (вставим в div ниже)
+  const messagesContentRef = useRef(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
+  const olderHistoryIntentAtRef = useRef(0);
   const [hasMore, setHasMore] = useState(true);
   const [showScrollDown, setShowScrollDown] = useState(false);
   const BOTTOM_THRESHOLD = 60;
   const [searchQuery, setSearchQuery] = useState('');
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [searchDraft, setSearchDraft] = useState('');
+  const [searchEverywhere, setSearchEverywhere] = useState(true);
   const chatListActionsRef = useRef(null);
   const [chatListView, setChatListView] = useState(() => {
     if (typeof window === 'undefined') return 'list';
@@ -262,12 +308,96 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
   });
   const [showAllPinsView, setShowAllPinsView] = useState(false);
   const mainRef = useRef(null); // контейнер правой части
+  const layoutRef = useRef(null); // корневой контейнер чата
   const [replyDraft, setReplyDraft] = useState(null);
-  const [audioPlaybackRate, setAudioPlaybackRate] = useState(1.0);
+  const audioPlaybackRateStorageKey = `webchats:audioPlaybackRate:${String(kind)}:${String(id)}`;
+  const [audioPlaybackRate, setAudioPlaybackRate] = useState(() => {
+    if (typeof window === 'undefined') return 1.0;
+    try {
+      const saved = Number(
+        localStorage.getItem(audioPlaybackRateStorageKey) ||
+        localStorage.getItem('webchats:audioPlaybackRate') ||
+        1
+      );
+      return AUDIO_SPEED_OPTIONS.includes(saved) ? saved : 1.0;
+    } catch {
+      return 1.0;
+    }
+  });
+  const audioElementsRef = useRef(new Map());
   const router = useRouter();
   const fileSpaceSendRef = useRef(false);
 
   const isRoomGroupOwner = kind === 'room' && roomChatType === 'group' && Number(roomCreatorUserId || 0) === Number(user?.id || 0);
+  const isPersonalRoom = kind === 'room' && roomChatType === 'personal';
+  const personalPartnerName = useMemo(() => {
+    if (!isPersonalRoom) return '';
+    const currentUserId = String(user?.id ?? '');
+    const partner = (Array.isArray(chatUsers) ? chatUsers : []).find((chatUser) => (
+      String(chatUser?.id ?? '') !== currentUserId
+    ));
+    return String(roomPartnerName || partner?.name || '').trim();
+  }, [chatUsers, isPersonalRoom, roomPartnerName, user?.id]);
+
+  useLayoutEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia('(max-width: 768px)').matches) {
+      return undefined;
+    }
+
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousBodyOverscroll = document.body.style.overscrollBehavior;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = 'hidden';
+    document.body.style.overscrollBehavior = 'none';
+    document.documentElement.style.overflow = 'hidden';
+    window.scrollTo(0, 0);
+
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      document.body.style.overscrollBehavior = previousBodyOverscroll;
+      document.documentElement.style.overflow = previousHtmlOverflow;
+    };
+  }, [kind, id]);
+
+  useEffect(() => {
+    const layout = layoutRef.current;
+    if (!layout || typeof window === 'undefined') return undefined;
+
+    const mobileQuery = window.matchMedia('(max-width: 768px)');
+    let frameId = null;
+    const updateVisibleHeight = () => {
+      if (!mobileQuery.matches) {
+        layout.style.removeProperty('--webchat-visible-height');
+        return;
+      }
+      if (frameId) cancelAnimationFrame(frameId);
+      frameId = requestAnimationFrame(() => {
+        const viewport = window.visualViewport;
+        const visibleBottom = viewport
+          ? viewport.height + viewport.offsetTop
+          : window.innerHeight;
+        const globalHeaderHeight = document.querySelector('.header')?.getBoundingClientRect().height || 0;
+        layout.style.setProperty('--webchat-visible-height', `${Math.round(visibleBottom)}px`);
+        layout.style.setProperty('--webchat-global-header-height', `${Math.round(globalHeaderHeight)}px`);
+      });
+    };
+
+    updateVisibleHeight();
+    window.addEventListener('resize', updateVisibleHeight);
+    window.visualViewport?.addEventListener('resize', updateVisibleHeight);
+    window.visualViewport?.addEventListener('scroll', updateVisibleHeight);
+    mobileQuery.addEventListener?.('change', updateVisibleHeight);
+
+    return () => {
+      if (frameId) cancelAnimationFrame(frameId);
+      window.removeEventListener('resize', updateVisibleHeight);
+      window.visualViewport?.removeEventListener('resize', updateVisibleHeight);
+      window.visualViewport?.removeEventListener('scroll', updateVisibleHeight);
+      mobileQuery.removeEventListener?.('change', updateVisibleHeight);
+      layout.style.removeProperty('--webchat-visible-height');
+      layout.style.removeProperty('--webchat-global-header-height');
+    };
+  }, []);
 
   const toggleChatListView = useCallback(() => {
     setChatListView((current) => {
@@ -286,6 +416,74 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
 
   const messagesRef = useRef(messages);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
+  // Не показываем список, пока его высота на старте ещё меняется из-за медиа,
+  // шрифтов и дочерних компонентов. Всё это время удерживаем нижнюю позицию,
+  // чтобы пользователь увидел уже полностью собранный чат без скачков.
+  useLayoutEffect(() => {
+    const chatKey = `${kind}:${id}`;
+    if (loadedMessagesChatRef.current !== chatKey) {
+      initialScrollReadyRef.current = false;
+      setInitialScrollReady(false);
+      return;
+    }
+
+    if (messages.length === 0 && loading) return;
+    if (stabilizedChatRef.current === chatKey) return;
+
+    const el = containerRef.current;
+    const content = messagesContentRef.current;
+    if (!el) return;
+
+    initialScrollReadyRef.current = false;
+    setInitialScrollReady(false);
+
+    let quietTimer = null;
+    let maxTimer = null;
+    let firstFrame = null;
+    let secondFrame = null;
+    let disposed = false;
+
+    const pinToBottom = () => {
+      el.scrollTop = el.scrollHeight;
+    };
+    const reveal = () => {
+      if (disposed) return;
+      pinToBottom();
+      stabilizedChatRef.current = chatKey;
+      initialScrollReadyRef.current = true;
+      setInitialScrollReady(true);
+    };
+    const waitForQuietLayout = () => {
+      pinToBottom();
+      if (quietTimer) clearTimeout(quietTimer);
+      quietTimer = setTimeout(reveal, 80);
+    };
+
+    const resizeObserver = typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(waitForQuietLayout)
+      : null;
+    resizeObserver?.observe(el);
+    if (content) resizeObserver?.observe(content);
+
+    firstFrame = requestAnimationFrame(() => {
+      pinToBottom();
+      secondFrame = requestAnimationFrame(waitForQuietLayout);
+    });
+    maxTimer = setTimeout(reveal, 450);
+
+    document.fonts?.ready.then(() => {
+      if (!disposed) waitForQuietLayout();
+    }).catch(() => {});
+
+    return () => {
+      disposed = true;
+      resizeObserver?.disconnect();
+      if (quietTimer) clearTimeout(quietTimer);
+      if (maxTimer) clearTimeout(maxTimer);
+      if (firstFrame) cancelAnimationFrame(firstFrame);
+      if (secondFrame) cancelAnimationFrame(secondFrame);
+    };
+  }, [kind, id, loading, messages.length]);
 
   const hasMoreRef = useRef(hasMore);
   useEffect(() => { hasMoreRef.current = hasMore; }, [hasMore]);
@@ -306,6 +504,7 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
   const seenRef = useRef(new Set());
 
   const pendingTemp = useRef(new Map());
+  const pendingUploadTempIdsRef = useRef(new Set());
 
   const [userMap, setUserMap] = useState({});
   const [roomDeliveredMessageIds, setRoomDeliveredMessageIds] = useState([]);
@@ -424,51 +623,74 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
   }, [API_BASE]);
 
   useEffect(() => {
-    // Загружаем всех пользователей
-    fetch(`${API_BASE}/admin/users/`, {
-      headers: (() => {
-        const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
-        return token ? { Authorization: `Bearer ${token}` } : {};
-      })(),
-    })
-      .then(res => res.json())
-      .then(users => {
-        const map = {};
-        users.forEach(u => {
-          const initials = u.name
-            ? u.name.split(' ').map(p => p[0]).slice(0, 2).join('').toUpperCase()
-            : '?';
-
-          // const color = generateColorForUser(u.id);
-          map[u.id] = { ...u, initials };
-        });
-        setUserMap(map);
-      })
-      .catch(console.error);
-  },[API_BASE]);
+    // Используем участников текущего чата. Полный /admin/users недоступен
+    // обычным пользователям и раньше создавал 403 + ошибку users.forEach.
+    const map = {};
+    for (const chatUser of Array.isArray(chatUsers) ? chatUsers : []) {
+      if (chatUser?.id == null) continue;
+      const name = String(chatUser.name || '').trim();
+      const initials = name
+        ? name.split(/\s+/).map(part => part[0]).slice(0, 2).join('').toUpperCase()
+        : '?';
+      map[chatUser.id] = { ...chatUser, initials };
+    }
+    setUserMap(map);
+  }, [chatUsers]);
 
   useEffect(() => {
     try {
-      const saved = Number(localStorage.getItem('webchats:audioPlaybackRate') || 1);
-      if (AUDIO_SPEED_OPTIONS.includes(saved)) {
-        setAudioPlaybackRate(saved);
-      }
+      const saved = Number(
+        localStorage.getItem(audioPlaybackRateStorageKey) ||
+        localStorage.getItem('webchats:audioPlaybackRate') ||
+        1
+      );
+      setAudioPlaybackRate(AUDIO_SPEED_OPTIONS.includes(saved) ? saved : 1.0);
     } catch {}
-  }, []);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('webchats:audioPlaybackRate', String(audioPlaybackRate));
-    } catch {}
-  }, [audioPlaybackRate]);
+  }, [audioPlaybackRateStorageKey]);
 
   const cycleAudioPlaybackRate = useCallback(() => {
     setAudioPlaybackRate((prev) => {
       const currentIndex = AUDIO_SPEED_OPTIONS.indexOf(prev);
       const nextIndex = (currentIndex + 1) % AUDIO_SPEED_OPTIONS.length;
-      return AUDIO_SPEED_OPTIONS[nextIndex];
+      const nextRate = AUDIO_SPEED_OPTIONS[nextIndex];
+      try {
+        localStorage.setItem(audioPlaybackRateStorageKey, String(nextRate));
+      } catch {}
+      return nextRate;
     });
+  }, [audioPlaybackRateStorageKey]);
+
+  const registerAudioElement = useCallback((messageId, element) => {
+    const key = String(messageId ?? '');
+    if (!key) return;
+    if (element) audioElementsRef.current.set(key, element);
+    else audioElementsRef.current.delete(key);
   }, []);
+
+  const handleAudioPlay = useCallback((messageId, element) => {
+    const activeKey = String(messageId ?? '');
+    audioElementsRef.current.forEach((audio, key) => {
+      if (key !== activeKey && audio && !audio.paused) audio.pause();
+    });
+    if (element) element.playbackRate = audioPlaybackRate;
+  }, [audioPlaybackRate]);
+
+  const handleAudioEnded = useCallback((messageId) => {
+    const currentIndex = messages.findIndex((item) => String(item?.id ?? '') === String(messageId ?? ''));
+    if (currentIndex < 0) return;
+    const nextMessage = messages[currentIndex + 1];
+    const nextAudio = (
+      String(nextMessage?.type || '').toLowerCase() === 'audio' &&
+      Boolean(nextMessage?.mediaUrl)
+    ) ? nextMessage : null;
+    if (!nextAudio?.id) return;
+    const nextElement = audioElementsRef.current.get(String(nextAudio.id));
+    if (!nextElement) return;
+    nextElement.currentTime = 0;
+    nextElement.playbackRate = audioPlaybackRate;
+    const playResult = nextElement.play();
+    if (playResult?.catch) playResult.catch((error) => console.warn('Не удалось автоматически включить следующее голосовое сообщение', error));
+  }, [audioPlaybackRate, messages]);
 
 
 
@@ -507,7 +729,10 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
       .then(res => {
         if (!mounted) return;
         const map = {};
-        (res.pinned || []).forEach(p => {
+        const pinnedItems = Array.isArray(res?.pinned)
+          ? res.pinned
+          : (Array.isArray(res) ? res : []);
+        pinnedItems.forEach(p => {
           if (p.message && p.message.id) map[p.message.id] = p;
         });
         setPinnedMap(map);
@@ -590,7 +815,6 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
 
   // ----------------------- ДЛЯ РЕСАЙЗА левого меню ---------------------------- //
 
-  const layoutRef = useRef(null); // корневой контейнер (обёртка)
   const isDraggingRef = useRef(false);
   const startXRef = useRef(0);
   const startPercentRef = useRef(0);
@@ -868,8 +1092,23 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
     // если auth ещё загружается — не делаем запрос
     if (authLoading) return;
 
+    const chatKey = `${kind}:${id}`;
+    historySyncedChatRef.current = '';
+    setFreshMessageIds({});
+    const cachedMessages = readChatMessagesCache(user?.id, kind, id);
+    if (cachedMessages?.length) {
+      const cachedPage = normalizeAsc(cachedMessages);
+      loadedMessagesChatRef.current = chatKey;
+      seenRef.current = new Set(cachedPage.map((message) => String(message?.id)).filter(Boolean));
+      messagesRef.current = cachedPage;
+      prevLastIdRef.current = cachedPage.length ? String(cachedPage[cachedPage.length - 1]?.id ?? '') : null;
+      setMessages(cachedPage);
+      setHasMore(true);
+      setLoading(false);
+    }
+
     (async () => {
-      setLoading(true);
+      setLoading(!cachedMessages?.length);
       setError(null);
       try {
         const headers = { Accept: 'application/json' };
@@ -879,7 +1118,7 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
         const baseUrls = historyCandidates(kind, id);
         const urls = baseUrls.map(u => {
           const p = new URLSearchParams();
-          p.set('limit', String(PAGE_LIMIT));
+          p.set('limit', String(INITIAL_MESSAGES_LIMIT));
           return `${u}?${p.toString()}`;
         });
 
@@ -914,19 +1153,12 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
             });
           }
         }
+        loadedMessagesChatRef.current = `${kind}:${id}`;
+        historySyncedChatRef.current = `${kind}:${id}`;
+        writeChatMessagesCache(user?.id, kind, id, page);
+        messagesRef.current = page;
         setMessages(page);
-        setHasMore(page.length === PAGE_LIMIT);
-
-        // forced one-time scroll to bottom (very robust)
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            const el = containerRef.current;
-            if (el) {
-              try { el.scrollTop = el.scrollHeight; } catch (err) {console.warn(err)}
-            }
-            try { bottomRef.current?.scrollIntoView({ block: 'end' }); } catch (err) {console.warn(err)}
-          });
-        });
+        setHasMore(page.length === INITIAL_MESSAGES_LIMIT);
 
         prevLastIdRef.current = page.length ? String(page[page.length - 1]?.id) : null;
 
@@ -959,6 +1191,7 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
                     } else {
                       setRoomChatType(null);
                     }
+                    setRoomPartnerName(String(info?.partner?.name ?? info?.partnerName ?? '').trim());
                     setRoomCreatorUserId(info?.creatorUserId ?? null);
                     setRoomExternalParticipants(Array.isArray(info?.externalParticipants) ? info.externalParticipants : []);
                     if (Array.isArray(info?.Users)) {
@@ -1091,14 +1324,16 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
 
       } catch (err) {
         console.error('load history failed', err);
-        if (mounted) setError(String(err));
+        loadedMessagesChatRef.current = `${kind}:${id}`;
+        historySyncedChatRef.current = `${kind}:${id}`;
+        if (mounted && !cachedMessages?.length) setError(String(err));
       } finally {
         if (mounted) setLoading(false);
       }
     })();
 
     return () => { mounted = false; };
-  }, [authLoading, historyCandidates, tryEndpoints, normalizeAsc, token, kind, id, API_BASE]);
+  }, [authLoading, historyCandidates, tryEndpoints, normalizeAsc, token, kind, id, API_BASE, user?.id]);
 
   const closeRoomParticipantsModal = useCallback(() => {
     if (roomParticipantsSaving) return;
@@ -1269,7 +1504,9 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
       const baseUrls = historyCandidates(kind, id);
       const urls = baseUrls.map((u) => {
         const p = new URLSearchParams();
-        p.set('limit', String(PAGE_LIMIT));
+        // Resync only refreshes the visible tail. Loading history here would
+        // silently expand a cached 30-message window to 90 and move the user.
+        p.set('limit', String(INITIAL_MESSAGES_LIMIT));
         if (kind === 'boss' && activeBossFolderRef.current?.userId) {
           p.set('userId', String(activeBossFolderRef.current.userId));
         }
@@ -1318,7 +1555,7 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
         return changed ? next : prev;
       });
 
-      if (addedForeignIds.length) {
+      if (addedForeignIds.length && historySyncedChatRef.current === `${kind}:${id}`) {
         markFreshMessageIds(addedForeignIds);
       }
 
@@ -1429,13 +1666,44 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
     const el = containerRef.current;
     if (!el) return;
     let ticking = false;
+    let touchStartY = null;
+    let touchTravel = 0;
+    let previousScrollTop = el.scrollTop;
+    olderHistoryIntentAtRef.current = 0;
+
+    const onWheel = (event) => {
+      if (event.deltaY < 0) olderHistoryIntentAtRef.current = Date.now();
+    };
+    const onTouchStart = (event) => {
+      touchStartY = event.touches?.[0]?.clientY ?? null;
+      touchTravel = 0;
+    };
+    const onTouchMove = (event) => {
+      const nextY = event.touches?.[0]?.clientY ?? null;
+      if (touchStartY != null && nextY != null) {
+        touchTravel += Math.max(0, nextY - touchStartY);
+        if (touchTravel >= 24) olderHistoryIntentAtRef.current = Date.now();
+      }
+      touchStartY = nextY;
+    };
+    const onKeyDown = (event) => {
+      if (event.key === 'ArrowUp' || event.key === 'PageUp' || event.key === 'Home') {
+        olderHistoryIntentAtRef.current = Date.now();
+      }
+    };
 
     const onScroll = () => {
+      if (!initialScrollReadyRef.current) return;
+      const currentScrollTop = el.scrollTop;
+      const movedUp = currentScrollTop < previousScrollTop - 1;
+      previousScrollTop = currentScrollTop;
       if (ticking) return;
       ticking = true;
       requestAnimationFrame(() => {
         const threshold = 120;
-        const shouldLoad = el.scrollTop <= threshold && hasMoreRef.current && !loadingOlderRef.current;
+        const hasRecentUserIntent = Date.now() - olderHistoryIntentAtRef.current < 1000;
+        const isActuallyScrollable = el.scrollHeight > el.clientHeight + 1;
+        const shouldLoad = movedUp && isActuallyScrollable && hasRecentUserIntent && el.scrollTop <= threshold && hasMoreRef.current && !loadingOlderRef.current;
         if (shouldLoad) {
           // call stable loadOlder
           loadOlder().catch(err => console.warn('loadOlder error', err));
@@ -1445,9 +1713,19 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
     };
 
     el.addEventListener('scroll', onScroll);
-    return () => el.removeEventListener('scroll', onScroll);
+    el.addEventListener('wheel', onWheel, { passive: true });
+    el.addEventListener('touchstart', onTouchStart, { passive: true });
+    el.addEventListener('touchmove', onTouchMove, { passive: true });
+    el.addEventListener('keydown', onKeyDown);
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      el.removeEventListener('wheel', onWheel);
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('keydown', onKeyDown);
+    };
     // empty deps: listener uses refs and stable callbacks
-  }, [loadOlder]);
+  }, [loadOlder, kind, id]);
 
 
 
@@ -1608,6 +1886,26 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
           return;
         }
 
+        // join/reconnect может повторно прислать backlog непрочитанных сообщений.
+        // Сообщение старше нижней границы уже загруженного окна — это история,
+        // а не новое событие; добавлять его в конец списка нельзя.
+        const currentMessages = Array.isArray(messagesRef.current) ? messagesRef.current : [];
+        const newestLoadedMessage = [...currentMessages].reverse().find((item) => item?.id != null);
+        const incomingNumericId = Number(msg.id);
+        const newestNumericId = Number(newestLoadedMessage?.id);
+        const incomingCreatedAt = new Date(msg.createdAt || 0).getTime();
+        const newestCreatedAt = new Date(newestLoadedMessage?.createdAt || 0).getTime();
+        const isHistoricalReplay = Boolean(
+          msg.id && newestLoadedMessage?.id && (
+            (Number.isFinite(incomingNumericId) && Number.isFinite(newestNumericId) && incomingNumericId < newestNumericId) ||
+            (!Number.isFinite(incomingNumericId) && incomingCreatedAt > 0 && newestCreatedAt > 0 && incomingCreatedAt < newestCreatedAt)
+          )
+        );
+        if (isHistoricalReplay) {
+          seenRef.current.add(String(msg.id));
+          return;
+        }
+
         const msgUserId = Number(msg.userId ?? msg.User?.id ?? msg.senderId ?? 0) || 0;
         const myUserId = Number(user?.id) || 0;
         if (
@@ -1630,6 +1928,13 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
         if (!msg.id && !msg.tempId) {
           // Иногда прилетает envelope без полноценного message — подтягиваем историю с сервера.
           requestResync('incoming:envelope-without-id');
+          return;
+        }
+
+        // Собственную загрузку завершает HTTP-ответ. Не даём socket-событию,
+        // которое может прийти раньше, запускать тяжёлый рендер изображения.
+        if (msg.tempId && pendingUploadTempIdsRef.current.has(String(msg.tempId))) {
+          if (msg.id) seenRef.current.add(String(msg.id));
           return;
         }
 
@@ -1678,7 +1983,7 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
             if (msg.id) seenRef.current.add(String(msg.id));
             return [...prev, msg];
           });
-          if (msg.id && msgUserId && myUserId && msgUserId !== myUserId) {
+          if (msg.id && msgUserId && myUserId && msgUserId !== myUserId && historySyncedChatRef.current === `${kind}:${id}`) {
             markFreshMessageIds([msg.id]);
           }
           return;
@@ -1699,7 +2004,7 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
           });
           pendingTemp.current.delete(matchKey);
           if (msg.id) seenRef.current.add(String(msg.id));
-          if (msg.id && msgUserId && myUserId && msgUserId !== myUserId) {
+          if (msg.id && msgUserId && myUserId && msgUserId !== myUserId && historySyncedChatRef.current === `${kind}:${id}`) {
             markFreshMessageIds([msg.id]);
           }
           return;
@@ -1715,7 +2020,7 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
           if (msg.id) seenRef.current.add(String(msg.id));
           return [...prev, msg];
         });
-        if (msg.id && msgUserId && myUserId && msgUserId !== myUserId) {
+        if (msg.id && msgUserId && myUserId && msgUserId !== myUserId && historySyncedChatRef.current === `${kind}:${id}`) {
           markFreshMessageIds([msg.id]);
         }
 
@@ -2040,9 +2345,22 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
 
     let file = fileOrBlob;
     if (fileOrBlob instanceof Blob && !(fileOrBlob instanceof File)) {
-      const ext = (fileOrBlob.type && fileOrBlob.type.split('/')[1]) || 'webm';
-      file = new File([fileOrBlob], `recording-${Date.now()}.${ext}`, { type: fileOrBlob.type || 'application/octet-stream' });
+      const rawMimeType = String(fileOrBlob.type || '').trim().toLowerCase();
+      const mimeType = rawMimeType.split(';')[0] || 'application/octet-stream';
+      const audioExtensionByMime = {
+        'audio/mp4': 'm4a',
+        'video/mp4': 'm4a',
+        'audio/webm': 'webm',
+        'video/webm': 'webm',
+        'audio/ogg': 'ogg',
+        'audio/mpeg': 'mp3',
+        'audio/wav': 'wav',
+        'audio/x-wav': 'wav',
+      };
+      const ext = audioExtensionByMime[mimeType] || 'webm';
+      file = new File([fileOrBlob], `recording-${Date.now()}.${ext}`, { type: mimeType });
     }
+    const optimisticId = `temp-upload-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
     // 👇 Определяем тип файла
     // const type = detectFileType(file);
@@ -2057,56 +2375,81 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
     fd.append('userId', String(user?.id ?? '0'));
     fd.append('messageType', opts.messageType || 'file');
     fd.append('type', opts.messageType );
+    fd.append('tempId', optimisticId);
     if (effectiveReplyToMessageId != null) {
       fd.append('replyToMessageId', String(effectiveReplyToMessageId));
       fd.append('replyToMessage', String(effectiveReplyToMessageId));
     }
 
+    const optimisticMediaUrl = file.type?.startsWith('image/') ? URL.createObjectURL(file) : null;
+    const optimisticMessage = {
+      id: optimisticId,
+      tempId: optimisticId,
+      content: '',
+      type: opts.messageType || 'file',
+      mediaUrl: optimisticMediaUrl,
+      mediaMimeType: file.type || 'application/octet-stream',
+      fileName: file.name || 'Файл',
+      fileSize: file.size || null,
+      userId: user?.id ?? null,
+      User: user?.id ? { id: user.id, name: user.name || user.username || null } : null,
+      roomId: kind === 'room' ? Number(id) : null,
+      chatId: kind === 'boss' ? Number(id) : null,
+      createdAt: new Date().toISOString(),
+      sending: true,
+      replyToMessageId: effectiveReplyToMessageId,
+    };
+
+    setMessages(prev => [...prev, optimisticMessage]);
+    pendingUploadTempIdsRef.current.add(optimisticId);
     setIsUploading(true);
     try {
-      const headers = {};
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-
-      const res = await fetch(`${API_BASE}/uploadfiles/fileFromWebchat`, {
+      const response = await fetch(`${API_BASE}/uploadfiles/fileFromWebchat`, {
         method: 'POST',
-        headers, // НЕ указываем Content-Type — браузер поставит boundary
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
         credentials: token ? 'omit' : 'include',
         body: fd,
       });
 
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || `Upload failed ${res.status}`);
-      }
+      const responseData = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(responseData.error || `Upload failed ${response.status}`);
 
-      let newMsg = await res.json();
+      let newMsg = responseData;
 
       if (effectiveReplyToMessageId != null && newMsg && !newMsg.replyToMessageId) {
         newMsg = { ...newMsg, replyToMessageId: effectiveReplyToMessageId };
       }
 
-      // Дедуп по seenRef — как у тебя для sendMessage
-      if (newMsg?.id) {
-        const sid = String(newMsg.id);
-        if (!seenRef.current.has(sid)) {
-          seenRef.current.add(sid);
-          setMessages(prev => [...prev, newMsg]);
-        }
-      } else {
-        setMessages(prev => [...prev, newMsg]);
-      }
+      // Сокет может доставить сохранённое сообщение раньше HTTP-ответа. Всегда
+      // заменяем optimistic-элемент и одновременно удаляем возможный дубль.
+      if (newMsg?.id) seenRef.current.add(String(newMsg.id));
+      setMessages(prev => {
+        const withoutServerDuplicate = newMsg?.id
+          ? prev.filter(message => String(message?.id) !== String(newMsg.id))
+          : prev;
+        const optimisticIndex = withoutServerDuplicate.findIndex(message => message?.id === optimisticId);
+        if (optimisticIndex < 0) return [...withoutServerDuplicate, newMsg];
+        const next = [...withoutServerDuplicate];
+        next[optimisticIndex] = newMsg;
+        return next;
+      });
       if (effectiveReplyToMessageId != null) {
         setReplyDraft(null);
       }
 
+      if (optimisticMediaUrl) setTimeout(() => URL.revokeObjectURL(optimisticMediaUrl), 0);
+
       return newMsg;
     } catch (err) {
       console.error('uploadFile error', err);
+      setMessages(prev => prev.filter(message => message?.id !== optimisticId));
+      if (optimisticMediaUrl) URL.revokeObjectURL(optimisticMediaUrl);
       throw err;
     } finally {
+      pendingUploadTempIdsRef.current.delete(optimisticId);
       setIsUploading(false);
     }
-  },[API_BASE, id, kind, token, user?.id, replyDraft]);
+  },[API_BASE, id, kind, token, user?.id, user?.name, user?.username, replyDraft]);
 
   useEffect(() => {
     if (fileSpaceSendRef.current || !token || !user?.id || !kind || !id) return;
@@ -3176,18 +3519,18 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
   const [originalTextBeforeEdit, setOriginalTextBeforeEdit] = useState('');
   const inputRef = useRef(null); // ref на ваш composer input (например <textarea ref={inputRef} 
 
-  const onEditMessage = (msg) => {
+  const onEditMessage = useCallback((msg) => {
     if (!msg || msg.type !== 'text') {
       // только текстовые сообщения можно редактировать (по вашему требованию)
       return;
     }
 
     setEditingMessage({ id: msg.id, content: msg.content });
-    setOriginalTextBeforeEdit(text); // text — текущее содержимое composer
+    setOriginalTextBeforeEdit(textRef.current); // текущее содержимое composer
     setText(msg.content);             // заполняем composer текстом сообщения
     // небольшая задержка для гарантии рендера, затем фокус
     requestAnimationFrame(() => inputRef.current?.focus());
-  };
+  }, []);
 
 
   const cancelEdit = () => {
@@ -3245,10 +3588,11 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
   };
 
   return (
-    <div ref={layoutRef} style={{ display: 'flex', height: 'calc(90vh)', minHeight: 0, overflow: 'hidden' }}>
+    <div ref={layoutRef} className="webchat-layout webchat-room-layout" style={{ display: 'flex', height: 'calc(90vh)', minHeight: 0, overflow: 'hidden' }}>
 
     {/* ASIDE (ширина в процентах) */}
     <aside
+      className="webchat-sidebar"
       style={{
         width: asideWidthPercent ? `${asideWidthPercent}%` : `${DEFAULT_ASIDE_PX}px`,
         borderRight: '1px solid #eee',
@@ -3290,6 +3634,12 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
               }} />
             )}
           </button>
+          <WebchatFontScaleControl
+            token={token}
+            apiBase={API_BASE}
+            buttonStyle={sidebarActionButtonStyle}
+            activeButtonStyle={sidebarActiveActionButtonStyle}
+          />
           <button
             type="button"
             title="Создать личный чат"
@@ -3466,6 +3816,15 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
                   if (event.key === 'Escape') setSearchModalOpen(false);
                 }}
               />
+              <label className="webchat-search-scope" style={{ display: 'flex', alignItems: 'center', gap: 9, marginTop: 12, color: '#374151', fontSize: 14, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={searchEverywhere}
+                  onChange={(event) => setSearchEverywhere(event.target.checked)}
+                  style={{ width: 17, height: 17, accentColor: '#2563eb' }}
+                />
+                <span>Везде</span>
+              </label>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
                 <button
                   type="button"
@@ -3495,6 +3854,7 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
       </div>
         <ChatList
           searchQuery={searchQuery}
+          searchEverywhere={searchEverywhere}
           roomId={kind === 'room' ? id : null}
           chatId={kind === 'boss' ? id : null}
           maxId={kind === 'max' ? id : null}
@@ -3521,6 +3881,7 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
 
       {/* Ресайзер — узкая полоса, которую можно перетаскивать */}
       <div
+        className="webchat-resizer"
         role="separator"
         tabIndex={0}
         aria-orientation="vertical"
@@ -3544,7 +3905,7 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
 
 
       {/* MAIN */}
-        <main ref={mainRef} 
+        <main ref={mainRef} className="webchat-main"
           style={{
             flex: 1,
             display: 'flex',
@@ -3589,11 +3950,20 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
             <>
 
           {/* HEADER — одна строка, поделена пополам */}
-          <div style={{ padding: 12, borderBottom: '1px solid #eee', flex: '0 0 auto' }}>
+          <div className="webchat-room-header" style={{ padding: 12, borderBottom: '1px solid #eee', flex: '0 0 auto' }}>
           {isBossFolderRoot ? (
             <div className="text-base font-semibold text-gray-800">Сотрудники</div>
           ) : (
             <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => router.push('/webchats')}
+              className="webchat-mobile-back"
+              aria-label="Вернуться к списку чатов"
+              title="Назад к чатам"
+            >
+              <IoChevronBack size={23} />
+            </button>
             {kind === 'boss' && bossFolderMode && activeBossFolder && (
               <button
                 type="button"
@@ -3628,7 +3998,32 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
               messagesById={messagesById}
               chatUsers={chatUsers}
               externalParticipants={roomExternalParticipants}
-              chatName={activeBossFolder?.name || chatName}
+              chatName={activeBossFolder?.name || personalPartnerName || chatName}
+              titleAction={(
+                <button
+                  type="button"
+                  onClick={cycleAudioPlaybackRate}
+                  title="Скорость голосовых сообщений"
+                  aria-label={`Скорость голосовых сообщений ${audioPlaybackRate.toFixed(2)}`}
+                  style={{
+                    flexShrink: 0,
+                    minWidth: 42,
+                    height: 24,
+                    margin: 0,
+                    padding: '0 7px',
+                    border: '1px solid #1d4ed8',
+                    borderRadius: 12,
+                    background: '#2563eb',
+                    color: '#ffffff',
+                    fontSize: 11,
+                    fontWeight: 700,
+                    lineHeight: 1,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {audioPlaybackRate.toFixed(2)}×
+                </button>
+              )}
               userColor="#6b7280"
               onJumpToMessage={handlePinnedHeaderClick}
               displayedPinnedId={displayedPinnedId}
@@ -3665,13 +4060,16 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
           >
 
           {/* messages container (one- or two-column depending on pinnedPanelOpen) */}
-          <div className="flex-1 overflow-hidden flex flex-col bg-[#ede8e8]">
+          <div
+            className="webchat-conversation-surface flex-1 overflow-hidden flex flex-col bg-[#ede8e8]"
+            style={{ backgroundColor: '#ede8e8', color: '#111827' }}
+          >
             {/* wrapper for either single-column messages or 2-column split */}
             <div
-              className={pinnedPanelOpen && !isBossFolderRoot ? 'flex h-full gap-4 p-3' : 'p-3 h-full'}
+              className={pinnedPanelOpen && !isBossFolderRoot ? 'flex h-full min-w-0 gap-4 p-3' : 'h-full min-w-0 p-3'}
             >
               {/* LEFT: messages column */}
-              <div className="flex-1 flex flex-col h-full">
+              <div className="flex min-w-0 flex-1 flex-col h-full">
                 {!isBossFolderRoot && kind === 'boss' && bossFolderMode && activeBossFolder && (
                   <div className="mb-2 shrink-0 overflow-hidden border border-gray-200 bg-white shadow-sm">
                     <button
@@ -3707,9 +4105,13 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
                 )}
                 <div
                   ref={containerRef}
-                  className="flex-1 overflow-auto p-3"
+                  className="chat-messages-container webchat-messages flex-1 overflow-auto p-3"
+                  style={{
+                    visibility: initialScrollReady ? 'visible' : 'hidden',
+                    overflowAnchor: 'none',
+                  }}
                 >
-                  <div className="flex flex-col gap-2 pb-6">
+                  <div ref={messagesContentRef} className="flex flex-col gap-2 pb-6">
                     {isBossFolderRoot ? (
                       <div className="mx-auto w-full max-w-4xl py-2">
                         {foldersLoading && <div className="text-sm text-gray-500">Загрузка сотрудников...</div>}
@@ -3743,7 +4145,19 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
                     ) : (
                     <>
                     {loading && <div>Загрузка сообщений...</div>}
-                    {loadingOlder && <div className="text-center">Загрузка старых сообщений...</div>}
+                    {hasMore && (
+                      <div className="text-center">
+                        <button
+                          type="button"
+                          disabled={loadingOlder}
+                          onClick={() => loadOlder().catch(err => console.warn('loadOlder error', err))}
+                          className="rounded-full border border-gray-300 bg-white px-3 py-1 text-xs text-gray-600 shadow-sm hover:bg-gray-50 disabled:cursor-wait disabled:opacity-70"
+                          style={{ margin: 0 }}
+                        >
+                          {loadingOlder ? 'Загрузка старых сообщений…' : 'Показать предыдущие сообщения'}
+                        </button>
+                      </div>
+                    )}
                     {error && <div className="text-red-600">{error}</div>}
 
                     {messages.map(m => (
@@ -3760,8 +4174,10 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
                         onSeenFresh={clearFreshMessageId}
                         messageStatus={getMessageStatus(m)}
                         currentUserId={user?.id}
+                        currentUserName={user?.name}
                         currentChatKind={kind}
                         currentChatId={id}
+                        isPersonalRoom={isPersonalRoom}
                         outgoingBubbleColor={outgoingBubbleColor}
                         onReply={handleReply}
                         onForward={openForwardModal}
@@ -3772,12 +4188,14 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
                         onToggleReaction={toggleMessageReaction}
                         reactionEmojis={REACTION_EMOJIS}
                         audioPlaybackRate={audioPlaybackRate}
-                        onCycleAudioSpeed={cycleAudioPlaybackRate}
+                        onRegisterAudioElement={registerAudioElement}
+                        onAudioPlay={handleAudioPlay}
+                        onAudioEnded={handleAudioEnded}
                         onTogglePin={handleTogglePin}
                         isPinned={Boolean(pinEntry)}
                         isPinnedMine={isPinnedMine}
                         userById={userMap[m.userId ?? m.User?.id] || chatUsers.find((chatUser) => String(chatUser?.id) === String(m.userId ?? m.User?.id))}
-                        onEdit={() => onEditMessage(m)}
+                        onEdit={onEditMessage}
                       />
                         );
                       })()
@@ -3863,8 +4281,10 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
                                 onSeenFresh={clearFreshMessageId}
                                 messageStatus={getMessageStatus(msg)}
                                 currentUserId={user?.id}
+                                currentUserName={user?.name}
                                 currentChatKind={kind}
                                 currentChatId={id}
+                                isPersonalRoom={isPersonalRoom}
                                 outgoingBubbleColor={outgoingBubbleColor}
                                 onReply={handleReply}
                                 onForward={openForwardModal}
@@ -3874,7 +4294,6 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
                                 onToggleReaction={toggleMessageReaction}
                                 reactionEmojis={REACTION_EMOJIS}
                                 audioPlaybackRate={audioPlaybackRate}
-                                onCycleAudioSpeed={cycleAudioPlaybackRate}
                                 onTogglePin={handleTogglePin}
                                 isPinned={true}
                                 isPinnedMine={String(p?.pinnedByUserId ?? p?.pinnedBy?.id ?? '') === String(user?.id ?? '')}
@@ -3993,12 +4412,12 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
 }
 
 
-function MessageItem({ message, messagesById = {}, isFresh = false, onSeenFresh = null, messageStatus, currentUserId, currentChatKind = null, currentChatId = null, onReply = null,
+const MessageItem = React.memo(function MessageItem({ message, messagesById = {}, isFresh = false, onSeenFresh = null, messageStatus, currentUserId, currentUserName = '', currentChatKind = null, currentChatId = null, onReply = null,
   onForward = null, onOpenPinned = null, onTogglePin = null, onToggleReaction = null, reactionEmojis = [],
   forwardSelectionMode = false, selectedForForward = false, onToggleForwardSelection = null,
-  audioPlaybackRate = 1.0, onCycleAudioSpeed = null,
+  audioPlaybackRate = 1.0, onRegisterAudioElement = null, onAudioPlay = null, onAudioEnded = null,
   outgoingBubbleColor = OUTGOING_BUBBLE_COLOR_DEFAULT,
-  isPinned = false, isPinnedMine = true, userById, onDelete = null, onEdit = null }) {
+  isPinned = false, isPinnedMine = true, isPersonalRoom = false, userById, onDelete = null, onEdit = null }) {
 
   const STATIC_BASE_URL = process.env.STATIC_BASE_URL;
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
@@ -4041,8 +4460,6 @@ function MessageItem({ message, messagesById = {}, isFresh = false, onSeenFresh 
     }
   }
 
-  let nameUserById;
-  if (userById) {nameUserById = userById.name};
   const bridgePhone = String(message.User?.phone || message.user?.phone || '').trim();
   const bridgeMatch = /^xbridge:([^:]+):(.+)$/i.exec(bridgePhone);
   const bridgeDomain = String(bridgeMatch?.[1] || '')
@@ -4057,6 +4474,7 @@ function MessageItem({ message, messagesById = {}, isFresh = false, onSeenFresh 
       : null;
   const externalAuthorKind = String(message.externalAuthorKind || '').trim().toLowerCase() || (bridgeMatch ? 'cross' : '');
   const isExternalAuthor = Boolean(externalAuthorKind);
+  const senderId = message.userId ?? message.User?.id ?? null;
   const author = isExternalAuthor
     ? (
         message.externalAuthorName ||
@@ -4064,11 +4482,10 @@ function MessageItem({ message, messagesById = {}, isFresh = false, onSeenFresh 
         (bridgeMatch ? (message.User?.name || `${bridgeMatch[2]} @${bridgeMatch[1]}`) : '') ||
         (externalAuthorKind === 'cross' ? 'Сотрудник другой компании' : externalAuthorKind === 'max' ? 'MAX пользователь' : 'Telegram пользователь')
       )
-    : (message.User?.name ?? (message.userId ? `${nameUserById}` : 'System'));
+    : (message.User?.name || userById?.name || (String(senderId) === String(currentUserId) ? currentUserName : '') || 'System');
 
   // определяем, моё ли сообщение. Внешний участник может хранить userId пригласившего,
   // но визуально это всегда входящее сообщение от клиента.
-  const senderId = message.userId ?? message.User?.id ?? null;
   const isMine = !isExternalAuthor && String(senderId) === String(currentUserId);
   // временное сообщение (temp) или пометка отправки
   const isTemp = typeof message.id === 'string' && message.id.startsWith('temp-');
@@ -4076,6 +4493,11 @@ function MessageItem({ message, messagesById = {}, isFresh = false, onSeenFresh 
 
   // media src
   const src = getImageSrc(message.mediaUrl);
+  const audioSrc = useMemo(() => {
+    if (message?.type !== 'audio' || !src || !src.startsWith('/uploads/')) return src;
+    const apiBase = String(API_BASE_URL || '').replace(/\/$/, '');
+    return `${apiBase}/uploadfiles/audio-compatible?path=${encodeURIComponent(src)}`;
+  }, [API_BASE_URL, message?.type, src]);
   const resolvedFileName = useMemo(() => {
     const raw = safeDecodeFilename(
       message?.displayFileName ??
@@ -4149,71 +4571,23 @@ function MessageItem({ message, messagesById = {}, isFresh = false, onSeenFresh 
     ...(freshBubbleStyle || {}),
   };
 
-
-
-  // --------------------------- Транскрибация ------------------------------- //
-
-  // используем transcription поля прямо из message
-  const status = message.transcriptionStatus || null; // pending|processing|done|failed|null
-  const text = message.transcriptionText || null;
-
-
-  useEffect(() => {
-    // Синхронизируем, если нужно. Здесь ничего не делаем.
-  }, [message.transcriptionStatus, message.transcriptionText, message.id]);
-
-  const handleIconClick = (e) => {
-    e.stopPropagation();
-    showTranscriptionToast();
-  };
-
-  const renderRightIcon = () => {
-    if (status === 'pending' || status === 'processing') {
-      return <Spinner />;
-    }
-
-    // показываем только документную иконку — она кликабельна и для done, и для прочих состояний
-    return (
-      <IoDocumentTextOutline
-        style={{ cursor: 'pointer' }}
-        size={19}
-        onClick={handleIconClick}
-        color="#2563eb"
-        title={status === 'done' ? 'Показать транскрибацию' : (status ? status : 'Транскрибация недоступна')}
-      />
-    );
-  };
-
-
-  const showTranscriptionToast = () => {
-    const hasText = typeof text === 'string' && text.trim().length > 0;
-
-    if (status === 'pending' || status === 'processing') {
+  const transcriptionStatus = message.transcriptionStatus || null;
+  const transcriptionText = message.transcriptionText || null;
+  const showTranscriptionToast = (event) => {
+    event.stopPropagation();
+    const hasText = typeof transcriptionText === 'string' && transcriptionText.trim().length > 0;
+    if (transcriptionStatus === 'pending' || transcriptionStatus === 'processing') {
       toast.info('Транскрибация в обработке…', { autoClose: 2000 });
-      return;
-    }
-    if (status === 'failed') {
+    } else if (transcriptionStatus === 'failed') {
       toast.error('Транскрибация не удалась.', { autoClose: 2000 });
-      return;
-    }
-    if (hasText) {
-      toast(
-        <div style={{ whiteSpace: 'pre-wrap', maxWidth: 600 }}>
-          {text}
-        </div>,
-        { autoClose: 20000 }
-      );
-      return;
-    }
-    // статус done, но текста нет -> пустая транскрибация
-    if (status === 'done') {
+    } else if (hasText) {
+      toast(<div style={{ whiteSpace: 'pre-wrap', maxWidth: 600 }}>{transcriptionText}</div>, { autoClose: 20000 });
+    } else if (transcriptionStatus === 'done') {
       toast.info('Транскрибация не существует.', { autoClose: 2000 });
-      return;
+    } else {
+      toast.info('Транскрибация недоступна.', { autoClose: 2000 });
     }
-    // fallback
-    toast.info('Транскрибация недоступна.', { autoClose: 2000 });
   };
-
 
   // ----------------- helper Get filesize --------------------------- //
   function formatFileSize(bytes) {
@@ -4278,6 +4652,8 @@ function MessageItem({ message, messagesById = {}, isFresh = false, onSeenFresh 
   const [menuVisible, setMenuVisible] = useState(false);
   const [menuPos, setMenuPos] = useState({ x: 0, y: 0 });
   const messageRootRef = useRef(null);
+  const messageLongPressRef = useRef(null);
+  const suppressMessageClickRef = useRef(false);
 
   useEffect(() => {
     // если меню открыто и пользователь кликает в любое место — закрыть
@@ -4299,6 +4675,39 @@ function MessageItem({ message, messagesById = {}, isFresh = false, onSeenFresh 
     const y = e.clientY + 6;
     setMenuPos({ x, y });
     setMenuVisible(true);
+  };
+
+  const cancelMessageLongPress = () => {
+    if (!messageLongPressRef.current) return;
+    clearTimeout(messageLongPressRef.current.timer);
+    messageLongPressRef.current = null;
+  };
+
+  const onMessagePointerDown = (event) => {
+    if (event.pointerType === 'mouse') return;
+    cancelMessageLongPress();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const timer = window.setTimeout(() => {
+      messageLongPressRef.current = null;
+      suppressMessageClickRef.current = true;
+      window.setTimeout(() => { suppressMessageClickRef.current = false; }, 1000);
+      onContextMenu({
+        clientX: startX,
+        clientY: startY,
+        preventDefault() {},
+        stopPropagation() {},
+      });
+    }, 500);
+    messageLongPressRef.current = { timer, startX, startY };
+  };
+
+  const onMessagePointerMove = (event) => {
+    const pending = messageLongPressRef.current;
+    if (!pending) return;
+    if (Math.abs(event.clientX - pending.startX) > 10 || Math.abs(event.clientY - pending.startY) > 10) {
+      cancelMessageLongPress();
+    }
   };
 
   // handlers for menu actions
@@ -4655,7 +5064,7 @@ function MessageItem({ message, messagesById = {}, isFresh = false, onSeenFresh 
   const userColor = getUserColor(seed);
   const initials = isExternalAuthor
     ? (externalAuthorKind === 'telegram' ? 'TG' : externalAuthorKind === 'max' ? 'MX' : externalAuthorKind === 'cross' ? 'BC' : getInitials(externalAuthorKind || 'EX'))
-    : getInitials(user.name || nameUserById || user.login || '??');
+    : getInitials(user.name || userById?.name || currentUserName || user.login || '??');
 
   // в теле JSX, внутри пузырька перед основным текстом:
   const replyToId =
@@ -4764,7 +5173,15 @@ function MessageItem({ message, messagesById = {}, isFresh = false, onSeenFresh 
       ref={messageRootRef}
       onContextMenuCapture={onContextMenu}
       onContextMenu={onContextMenu}
+      onPointerDown={onMessagePointerDown}
+      onPointerMove={onMessagePointerMove}
+      onPointerUp={cancelMessageLongPress}
+      onPointerCancel={cancelMessageLongPress}
       onClick={() => {
+        if (suppressMessageClickRef.current) {
+          suppressMessageClickRef.current = false;
+          return;
+        }
         if (forwardSelectionMode && typeof onToggleForwardSelection === 'function') {
           onToggleForwardSelection(message);
           return;
@@ -4773,7 +5190,7 @@ function MessageItem({ message, messagesById = {}, isFresh = false, onSeenFresh 
           onSeenFresh(message.id);
         }
       }}
-      className={`relative flex items-end gap-3 my-2 ${forwardSelectionMode ? 'pl-11' : ''} ${isMine ? 'justify-end' : 'justify-start'}`}
+      className={`webchat-message-row ${isPersonalRoom ? 'webchat-personal-message' : ''} ${isMine ? 'webchat-message-mine-row' : 'webchat-message-other-row'} relative flex items-end gap-3 my-2 ${forwardSelectionMode ? 'pl-11' : ''} ${isMine ? 'justify-end' : 'justify-start'}`}
       data-message-id={message.id}
       data-chat-kind={kind || ''}
       data-room-id={roomId ?? ''}
@@ -4810,7 +5227,7 @@ function MessageItem({ message, messagesById = {}, isFresh = false, onSeenFresh 
       )}
 
       {/* если нужно показывать аватар слева для чужих — можно вставить здесь */}
-      {!isMine && (() => {
+      {!isMine && currentChatKind !== 'room' && (() => {
         // стили, используемые в нескольких местах:
         const avatarStyle = {
           width: 44,
@@ -4890,12 +5307,12 @@ function MessageItem({ message, messagesById = {}, isFresh = false, onSeenFresh 
         
       ) : (
 
-        <div className={`flex flex-col ${isMine ? 'items-end' : 'items-start'} ${maxWidthClass}`}>
+        <div className={`webchat-message-body ${isCompactMediaBubble ? 'webchat-message-media' : ''} flex flex-col ${isMine ? 'items-end' : 'items-start'} ${maxWidthClass}`}>
 
 
         {/* пузырёк */}
         <div
-          className={`${bubbleCommon} ${isMine ? mineBubble : otherBubble} ${isSending ? 'opacity-70 italic' : ''}`}
+          className={`webchat-message-bubble ${isMine ? 'webchat-message-mine' : 'webchat-message-other'} ${bubbleCommon} ${isMine ? mineBubble : otherBubble} ${isSending ? 'opacity-70 italic' : ''}`}
           style={bubbleStyle}
         >
 
@@ -5043,46 +5460,66 @@ function MessageItem({ message, messagesById = {}, isFresh = false, onSeenFresh 
 
           {message.type === 'audio' && src && (
             <div
-              className="mt-1 flex w-full flex-wrap items-center gap-1.5 rounded-md border border-gray-500 px-1.5 py-1"
-              style={{ minWidth: 0, boxSizing: 'border-box', backgroundColor: '#D1D5DB' }}
+              className="webchat-simple-audio mt-1 w-full"
+              style={{
+                minWidth: 0,
+                maxWidth: '100%',
+                boxSizing: 'border-box',
+                display: 'grid',
+                gridTemplateColumns: isMine ? 'minmax(0, 1fr) 30px 30px' : 'minmax(0, 1fr) 30px',
+                alignItems: 'center',
+                gap: 6,
+              }}
+              onClick={(event) => event.stopPropagation()}
             >
-                  <div
-                    className="min-w-[220px] flex-1 overflow-hidden rounded-md border border-gray-300 p-px"
-                    style={{ backgroundColor: '#E5E7EB' }}
-                  >
                   <audio
-                    ref={audioRef}
+                    ref={(element) => {
+                      audioRef.current = element;
+                      if (typeof onRegisterAudioElement === 'function') onRegisterAudioElement(message?.id, element);
+                    }}
                     controls
-                    src={src}
-                    className="webchat-audio-player block w-full"
-                    style={{ height: 34, backgroundColor: 'transparent', border: 0, outline: 0 }}
+                    src={audioSrc}
+                    preload="metadata"
+                    style={{ display: 'block', width: '100%', minWidth: 0, maxWidth: '100%' }}
                     onLoadedMetadata={() => {
                       if (audioRef.current) {
                         audioRef.current.playbackRate = audioPlaybackRate;
                       }
                     }}
-                  />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (typeof onCycleAudioSpeed === 'function') onCycleAudioSpeed();
+                    onPlay={(event) => {
+                      if (typeof onAudioPlay === 'function') onAudioPlay(message?.id, event.currentTarget);
                     }}
-                    className="inline-flex h-[30px] min-w-[44px] shrink-0 items-center justify-center rounded-md border border-blue-400 bg-white px-1.5 text-xs font-semibold leading-none text-blue-600 transition-colors hover:bg-blue-50"
-                    style={{ margin: 0, marginRight: 0 }}
-                    title="Скорость воспроизведения"
-                  >
-                    {audioPlaybackRate.toFixed(2)}x
-                  </button>
-                  <div
-                  className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-md border border-blue-400 bg-white text-blue-600"
-                  onClick={(e) => e.stopPropagation()}>
-                    {renderRightIcon()}
-                  </div>
+                    onEnded={() => {
+                      if (typeof onAudioEnded === 'function') onAudioEnded(message?.id);
+                    }}
+                  />
+                    <button
+                      type="button"
+                      onClick={showTranscriptionToast}
+                      title={transcriptionStatus === 'done' ? 'Показать транскрибацию' : 'Статус транскрибации'}
+                      aria-label={transcriptionStatus === 'done' ? 'Показать транскрибацию' : 'Статус транскрибации'}
+                      style={{
+                        width: 30,
+                        height: 30,
+                        margin: 0,
+                        padding: 0,
+                        border: '1px solid #60a5fa',
+                        borderRadius: 6,
+                        background: '#ffffff',
+                        color: '#2563eb',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {transcriptionStatus === 'pending' || transcriptionStatus === 'processing'
+                        ? <Spinner />
+                        : <IoDocumentTextOutline size={19} />}
+                    </button>
                   {renderMessageStatus({ audioControls: true })}
                   {message.reactions?.length > 0 && (
-                    <span className="order-last mt-0.5 inline-flex w-full basis-full items-center">
+                    <span className="mt-0.5 inline-flex w-full items-center" style={{ gridColumn: '1 / -1' }}>
                       {renderReactionBadges()}
                     </span>
                   )}
@@ -5125,7 +5562,9 @@ function MessageItem({ message, messagesById = {}, isFresh = false, onSeenFresh 
                   maxWidth: '480px',
                   maxHeight: '320px',
                   width: '100%',
-                  height: 'auto',
+                  aspectRatio: '16 / 9',
+                  objectFit: 'contain',
+                  backgroundColor: '#000',
                 }}
               />
               {!!resolvedFileName && (
@@ -5191,7 +5630,7 @@ function MessageItem({ message, messagesById = {}, isFresh = false, onSeenFresh 
         onPaste={handlePaste}
         onShare={handleShare}
         onSave={handleSave}
-        onEdit={() => onEdit?.()}
+        onEdit={() => onEdit?.(message)}
         onDelete={handleDelete}
         onReact={handleReaction}
         onOpenPinned={handleOpenPinned}
@@ -5205,5 +5644,17 @@ function MessageItem({ message, messagesById = {}, isFresh = false, onSeenFresh 
     </div>
   );
 
-}
+}, (previous, next) => {
+  const keys = new Set([...Object.keys(previous), ...Object.keys(next)]);
+  keys.delete('messagesById');
+  for (const key of keys) {
+    if (previous[key] !== next[key]) return false;
+  }
+
+  const replyId = previous.message?.replyToMessageId
+    ?? previous.message?.replyToMessage?.id
+    ?? (typeof previous.message?.replyToMessage === 'number' ? previous.message.replyToMessage : null);
+  if (replyId == null) return true;
+  return previous.messagesById?.[String(replyId)] === next.messagesById?.[String(replyId)];
+});
 

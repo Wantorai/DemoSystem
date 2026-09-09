@@ -109,7 +109,7 @@ async function emitUpdate(req, payload) {
     // безопасно берём io из app (в server.js: app.set('io', io))
     const io = req.app.get('io');
     if (!io) return;
-    const roomName = payload.kind === 'room' ? `room-${payload.chatId}` : `boss-${payload.chatId}`;
+    const roomName = payload.kind === 'room' ? `room-${payload.chatId}` : `chat-${payload.chatId}`;
     io.to(roomName).emit('messageUpdated', payload);
   } catch (e) {
     console.warn('emitUpdate error', e);

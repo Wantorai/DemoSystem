@@ -30,6 +30,7 @@ export default function PinnedBarOneLine({
   chatUsers = [],
   externalParticipants = [],
   chatName = '',
+  titleAction = null,
   onJumpToMessage = () => {},
   pinnedPanelOpen = false,           // <- булево
 //   setPinnedPanelOpen,                 // <- функция для изменения
@@ -163,6 +164,24 @@ export default function PinnedBarOneLine({
 
   const isLoadingThis = last?.message?.id && String(loadingPinnedId) === String(last.message.id);
 
+  const handlePinnedControlClick = (event) => {
+    event.stopPropagation();
+    if (disabled) return;
+
+    const isMobile = typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches;
+    if (isMobile) {
+      const messageId = last?.messageId ?? last?.message?.id;
+      if (messageId) onJumpToMessage(messageId);
+      return;
+    }
+
+    if (pinnedPanelOpen) {
+      closePinnedPanel?.();
+    } else {
+      openPinnedPanel?.();
+    }
+  };
+
     //     useEffect(() => {
     //   console.log('pinnedList raw', pinnedList.map(p => ({ id: p.id, messageId: p.message?.id, orderIndex: p.orderIndex, pinnedAt: p.pinnedAt })));
     // }, [pinnedList]);
@@ -170,27 +189,30 @@ export default function PinnedBarOneLine({
   
 
   return (
-    <div className="w-full">
+    <div className="webchat-pinned-bar w-full">
       {/* grid 2 columns -> ровно пополам */}
       <div className="grid grid-cols-2 gap-3 items-center">
         {/* LEFT half — staff */}
         <div
-          className={`${halfBase} col-span-1`}
+          className={`webchat-chat-identity ${halfBase} col-span-1`}
           aria-label="Список сотрудников"
           role="group"
         >
           <div className="flex items-center">
             <IoPeopleOutline size={18} color={userColor} />
           </div>
-          <div className="min-w-0">
-            <div className="text-sm font-semibold text-gray-900 truncate">{chatName || 'Чат'}</div>
-            <div className="text-sm text-gray-500 mt-0.5 truncate" title={staffText}>В чате: {renderParticipantInline()}</div>
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center gap-2">
+              <div className="webchat-chat-name min-w-0 flex-1 text-sm font-semibold text-gray-900 truncate">{chatName || 'Чат'}</div>
+              {titleAction}
+            </div>
+            <div className="webchat-chat-participants text-sm text-gray-500 mt-0.5 truncate" title={staffText}>В чате: {renderParticipantInline()}</div>
           </div>
         </div>
         
 
         {/* RIGHT half — pinned */}
-        <div className={`${halfBase} col-span-1 flex justify-between items-center`}>
+        <div className={`webchat-pins-summary ${halfBase} col-span-1 flex justify-between items-center`}>
             {hasPinned ? (
                 <div
                     className="flex items-center gap-3 w-full"
@@ -209,7 +231,7 @@ export default function PinnedBarOneLine({
                     <IoBookmarksOutline size={18} color={userColor} />
                     </div>
 
-                    <div className="min-w-0 flex-1">
+                    <div className="webchat-pinned-preview min-w-0 flex-1">
                     <div className="text-sm font-semibold text-gray-900 truncate">Закреплённое сообщение №{last.id}</div>
                     <div className="text-sm text-gray-500 mt-0.5 truncate">{renderPreview(last.message)}</div>
                     </div>
@@ -223,15 +245,8 @@ export default function PinnedBarOneLine({
                         className="ml-2 p-1 rounded flex items-center gap-1
                             bg-white hover:bg-yellow-100 focus:bg-yellow-100 active:bg-yellow-100
                             outline-none border-none"
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            if (pinnedPanelOpen) {
-                            closePinnedPanel();
-                            } else {
-                            openPinnedPanel();
-                            }
-                        }}
-                        aria-label={pinnedPanelOpen ? "Закрыть панель закрепов" : "Открыть панель закрепов"}
+                        onClick={handlePinnedControlClick}
+                        aria-label={pinnedPanelOpen ? "Закрыть панель закрепов или перейти к сообщению" : "Открыть закрепы или перейти к сообщению"}
                         >
                         {pinnedPanelOpen ? (
                             <IoClose size={16} color="#6b7280" />
@@ -247,10 +262,11 @@ export default function PinnedBarOneLine({
                     </div>
                 </div>
                 ) : (
-                <div className="w-full flex items-center gap-3 opacity-60">
+                <div className="webchat-no-pins w-full flex items-center gap-3 opacity-60">
                 <div className="flex items-center">
                     <IoBookmarksOutline size={18} color={userColor} />
                 </div>
+                <span className="webchat-empty-pin-count">0</span>
                 <div className="min-w-0">
                     <div className="text-sm font-semibold text-gray-900">Нет закреплённых</div>
                     <div className="text-sm text-gray-500 mt-0.5">—</div>

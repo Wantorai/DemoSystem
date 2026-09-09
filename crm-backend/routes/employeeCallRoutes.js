@@ -1,6 +1,8 @@
 const express = require('express');
 const authMiddleware = require('../middleware/authMiddleware');
 const {
+  acknowledgeNativeReachability,
+  acknowledgeReachability,
   acceptCall,
   endCall,
   getActiveCall,
@@ -13,6 +15,8 @@ const {
 const router = express.Router();
 
 router.post('/calls', authMiddleware, startCall);
+router.post('/calls/:callId/native-reachable', acknowledgeNativeReachability);
+router.post('/calls/:callId/reachable', authMiddleware, acknowledgeReachability);
 router.get('/calls/active', authMiddleware, getActiveCall);
 router.get('/calls/:callId', authMiddleware, getCall);
 router.post('/calls/:callId/accept', authMiddleware, acceptCall);

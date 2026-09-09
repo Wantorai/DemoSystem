@@ -135,7 +135,7 @@ export default function MessageContextMenu({
         boxShadow: '0 10px 30px rgba(2,6,23,0.2)',
         background: '#fff',
         borderRadius: 10,
-        padding: 6,
+        padding: 4,
         border: '1px solid rgba(0,0,0,0.04)',
         backdropFilter: 'saturate(120%) blur(4px)',
         maxHeight: `calc(100vh - ${PADDING * 2}px)`,
@@ -149,7 +149,7 @@ export default function MessageContextMenu({
         e.stopPropagation();
       }}
     >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
         {(!isExternalVariant || allowReply) && (
           <MenuItem icon={<IoReturnDownBackOutline size={18} color="#007AFF" />} label="Ответить" onClick={() => { onReply(); closeMenu(); }} />
         )}
@@ -275,10 +275,10 @@ function MenuItem({ icon, label, onClick, disabled = false }) {
       onClick={disabled ? undefined : onClick}
       disabled={disabled}
       role="menuitem"
-      className={`flex items-center gap-3 w-full text-left rounded px-3 py-1.5 transition-colors ${disabled ? 'opacity-60 cursor-not-allowed' : 'hover:bg-gray-50'}`}
+      className={`flex items-center gap-2 w-full text-left rounded px-2 py-1 transition-colors ${disabled ? 'opacity-60 cursor-not-allowed' : 'hover:bg-gray-50'}`}
       style={{ border: 'none', background: 'transparent' }}
     >
-      <div style={{ width: 28, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ width: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         {icon}
       </div>
       <div style={{ flex: 1, fontSize: 14, color: '#111' }}>{label}</div>

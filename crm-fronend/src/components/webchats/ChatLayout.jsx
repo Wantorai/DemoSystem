@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import ChatList from './ChatList';
 import CrossChatEntry from './CrossChatEntry';
 import AllPinsView from './AllPinsView';
+import { applyWebChatFontScale } from '../AppStyleLoader';
 import { AuthContext } from '../../context/AuthContext';
 import {
   IoBusinessOutline,
@@ -34,7 +35,16 @@ export default function ChatLayout({
   const [searchQuery, setSearchQuery] = useState(initialSearchQuery);
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [searchDraft, setSearchDraft] = useState(initialSearchQuery);
+  const [searchEverywhere, setSearchEverywhere] = useState(true);
   const [showAllPinsView, setShowAllPinsView] = useState(false);
+  const [fontScaleMode] = useState(() => (
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches ? 'mobile' : 'desktop'
+  ));
+  const [fontScaleModalOpen, setFontScaleModalOpen] = useState(false);
+  const [fontScale, setFontScale] = useState(100);
+  const [fontScaleDraft, setFontScaleDraft] = useState(100);
+  const [fontScaleSaving, setFontScaleSaving] = useState(false);
+  const [fontScaleError, setFontScaleError] = useState('');
   const chatListActionsRef = useRef(null);
   const layoutRef = useRef(null);
   const toolbarRef = useRef(null);
@@ -90,6 +100,80 @@ export default function ChatLayout({
       } catch {}
       return next;
     });
+  };
+
+  useEffect(() => {
+    if (!token) {
+      setFontScale(100);
+      setFontScaleDraft(100);
+      return;
+    }
+    let cancelled = false;
+    fetch(`${apiBase}/user-settings/webchat-text-scale?mode=${fontScaleMode}`, {
+      headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Не удалось загрузить размер текста');
+        return response.json();
+      })
+      .then((data) => {
+        if (cancelled) return;
+        const percent = Math.min(160, Math.max(80, Math.round(Number(data?.percent) || 100)));
+        setFontScale(percent);
+        setFontScaleDraft(percent);
+        applyWebChatFontScale(percent);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setFontScale(100);
+        setFontScaleDraft(100);
+        applyWebChatFontScale(100);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBase, fontScaleMode, token]);
+
+  const openFontScaleModal = () => {
+    setFontScaleDraft(fontScale);
+    setFontScaleError('');
+    setFontScaleModalOpen(true);
+  };
+
+  const closeFontScaleModal = () => {
+    applyWebChatFontScale(fontScale);
+    setFontScaleDraft(fontScale);
+    setFontScaleError('');
+    setFontScaleModalOpen(false);
+  };
+
+  const saveFontScale = async () => {
+    const percent = Math.min(160, Math.max(80, Math.round(Number(fontScaleDraft) || 100)));
+    setFontScaleSaving(true);
+    setFontScaleError('');
+    try {
+      const response = await fetch(`${apiBase}/user-settings/webchat-text-scale`, {
+        method: 'PUT',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ mode: fontScaleMode, percent }),
+      });
+      if (!response.ok) throw new Error('Не удалось сохранить размер текста');
+      setFontScale(percent);
+      setFontScaleDraft(percent);
+      applyWebChatFontScale(percent);
+      window.dispatchEvent(new CustomEvent('webchat-font-scale-changed', {
+        detail: { mode: fontScaleMode, percent },
+      }));
+      setFontScaleModalOpen(false);
+    } catch (error) {
+      setFontScaleError(error?.message || 'Не удалось сохранить размер текста');
+    } finally {
+      setFontScaleSaving(false);
+    }
   };
 
   const sidebarActionButtonStyle = {
@@ -251,14 +335,14 @@ export default function ChatLayout({
   }, [clampAsidePercent, saveAsidePercent]);
 
   return (
-    <div ref={layoutRef} style={{
+    <div ref={layoutRef} className="webchat-layout webchat-list-layout" style={{
       display: 'flex', 
       height: 'calc(90vh)', 
       minHeight: 0, 
       overflow: 'hidden' 
     }}>
       {/* Левая панель - список чатов (фиксированная ширина) */}
-      <aside style={{ 
+      <aside className="webchat-sidebar" style={{
         width: asideWidthPercent ? `${asideWidthPercent}%` : `${DEFAULT_ASIDE_PX}px`,
         borderRight: '1px solid #eee', 
         overflow: 'hidden',
@@ -267,9 +351,9 @@ export default function ChatLayout({
         flexDirection: 'column',
         minHeight: 0
       }}>
-        <div style={{ padding: 12 }}>
+        <div className="webchat-sidebar-header" style={{ padding: 12 }}>
           <div style={{ color: '#666', fontSize: 13 }}></div>
-          <div style={{
+          <div className="webchat-sidebar-toolbar" style={{
             display: 'flex',
             alignItems: 'center',
             gap: 8,
@@ -299,6 +383,15 @@ export default function ChatLayout({
                     background: '#2563eb',
                   }} />
                 )}
+              </button>
+              <button
+                type="button"
+                title="Размер текста в чатах"
+                onClick={openFontScaleModal}
+                style={fontScale !== 100 ? sidebarActiveActionButtonStyle : sidebarActionButtonStyle}
+                aria-label="Настроить размер текста в чатах"
+              >
+                <span aria-hidden="true" style={{ fontSize: 21, lineHeight: 1, fontWeight: 700 }}>A</span>
               </button>
               {searchQuery && (
                 <button
@@ -536,6 +629,15 @@ export default function ChatLayout({
                   if (event.key === 'Escape') setSearchModalOpen(false);
                 }}
               />
+              <label className="webchat-search-scope" style={{ display: 'flex', alignItems: 'center', gap: 9, marginTop: 12, color: '#374151', fontSize: 14, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={searchEverywhere}
+                  onChange={(event) => setSearchEverywhere(event.target.checked)}
+                  style={{ width: 17, height: 17, accentColor: '#2563eb' }}
+                />
+                <span>Везде</span>
+              </label>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
                 <button
                   type="button"
@@ -562,10 +664,107 @@ export default function ChatLayout({
             </div>
           </div>
         )}
+        {fontScaleModalOpen && (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Размер текста в чатах"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) closeFontScaleModal();
+            }}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 10000,
+              background: 'rgba(15,23,42,0.35)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 16,
+            }}
+          >
+            <div style={{
+              width: 'min(420px, calc(100vw - 32px))',
+              background: '#fff',
+              color: '#111827',
+              borderRadius: 14,
+              boxShadow: '0 18px 50px rgba(15,23,42,0.25)',
+              border: '1px solid rgba(229,231,235,0.95)',
+              padding: 16,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                <div style={{ fontSize: 17, fontWeight: 700 }}>
+                  Размер текста — {fontScaleMode === 'mobile' ? 'телефон' : 'компьютер'}
+                </div>
+                <button
+                  type="button"
+                  onClick={closeFontScaleModal}
+                  aria-label="Закрыть"
+                  style={{ ...sidebarActionButtonStyle, width: 34, height: 34, borderRadius: 9 }}
+                >
+                  <IoCloseOutline size={22} />
+                </button>
+              </div>
+              <div style={{ marginTop: 18, display: 'flex', alignItems: 'center', gap: 14 }}>
+                <span style={{ fontSize: 13, fontWeight: 700 }}>A</span>
+                <input
+                  type="range"
+                  min="80"
+                  max="160"
+                  step="5"
+                  value={fontScaleDraft}
+                  onChange={(event) => {
+                    const percent = Number(event.target.value);
+                    setFontScaleDraft(percent);
+                    applyWebChatFontScale(percent);
+                  }}
+                  style={{ flex: 1, minWidth: 0 }}
+                />
+                <span style={{ fontSize: 21, fontWeight: 700 }}>A</span>
+              </div>
+              <div style={{ marginTop: 10, textAlign: 'center', fontSize: 15, fontWeight: 700 }}>
+                {fontScaleDraft}%
+              </div>
+              {fontScaleError && (
+                <div style={{ marginTop: 10, color: '#dc2626', fontSize: 13 }}>{fontScaleError}</div>
+              )}
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginTop: 18 }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFontScaleDraft(100);
+                    applyWebChatFontScale(100);
+                  }}
+                  disabled={fontScaleSaving}
+                  style={{ ...sidebarActionButtonStyle, width: 'auto', padding: '0 12px' }}
+                >
+                  По умолчанию
+                </button>
+                <button
+                  type="button"
+                  onClick={saveFontScale}
+                  disabled={fontScaleSaving || !token}
+                  style={{
+                    ...sidebarActionButtonStyle,
+                    width: 'auto',
+                    padding: '0 16px',
+                    borderColor: '#2563eb',
+                    background: '#2563eb',
+                    color: '#fff',
+                    opacity: fontScaleSaving || !token ? 0.65 : 1,
+                  }}
+                >
+                  {fontScaleSaving ? 'Сохранение…' : 'Сохранить'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         
         {/* ChatList с поддержкой всех типов чатов */}
         <ChatList 
           searchQuery={searchQuery}
+          searchEverywhere={searchEverywhere}
           roomId={roomId}
           chatId={chatId}
           maxId={maxId}
@@ -578,6 +777,7 @@ export default function ChatLayout({
       </aside>
 
       <div
+        className="webchat-resizer"
         role="separator"
         tabIndex={0}
         aria-orientation="vertical"
@@ -598,7 +798,7 @@ export default function ChatLayout({
       </div>
 
       {/* Правая панель - контент чата */}
-      <main style={{
+      <main className="webchat-main" style={{
         flex: 1,
         display: 'flex',
         flexDirection: 'column',

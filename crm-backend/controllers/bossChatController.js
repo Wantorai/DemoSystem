@@ -315,6 +315,18 @@ const listBossChatsForWeb = async (req, res) => {
       });
 
       const last = normalizeLastMessage(lastMessage);
+      let lastMessageStatus = null;
+      if (lastMessage && Number(lastMessage.userId) === Number(userId)) {
+        const otherMemberships = await BossChatUsers.findAll({
+          where: { chatId, userId: { [Op.ne]: userId } },
+          attributes: ['userId', 'lastReadMessageId'],
+        });
+        lastMessageStatus = otherMemberships.length === 0
+          ? 'read'
+          : otherMemberships.every((membership) => Number(membership.lastReadMessageId || 0) >= Number(lastMessage.id))
+            ? 'read'
+            : 'sent';
+      }
 
       return {
         kind: 'boss',
@@ -325,6 +337,7 @@ const listBossChatsForWeb = async (req, res) => {
         lastMessageRaw: last.raw,
         lastMessageAuthor: last.author,
         lastMessageTime: last.time,
+        lastMessageStatus,
         updatedAt: c.updatedAt,
         unread,
         lastReadMessageId: lastReadId

@@ -3,6 +3,8 @@ const auth = require('../middleware/authMiddleware');
 const {
   getMyMobileTextScale,
   setMyMobileTextScale,
+  getMyWebchatTextScale,
+  setMyWebchatTextScale,
   getMyAutoReply,
   setMyAutoReply,
   getMyClientAutoReply,
@@ -17,6 +19,8 @@ const router = express.Router();
 
 router.get('/user-settings/mobile-text-scale', auth, getMyMobileTextScale);
 router.put('/user-settings/mobile-text-scale', auth, setMyMobileTextScale);
+router.get('/user-settings/webchat-text-scale', auth, getMyWebchatTextScale);
+router.put('/user-settings/webchat-text-scale', auth, setMyWebchatTextScale);
 router.get('/user-settings/auto-reply', auth, getMyAutoReply);
 router.put('/user-settings/auto-reply', auth, setMyAutoReply);
 router.get('/user-settings/client-auto-reply', auth, getMyClientAutoReply);

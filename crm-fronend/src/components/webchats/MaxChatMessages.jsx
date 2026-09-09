@@ -818,40 +818,18 @@ export default function MaxChatMessages({ internalId, chatInfo, provider = 'max'
 
         return (
           <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
             width: 'min(480px, 65vw)',
+            maxWidth: '100%',
             minWidth: 0,
-            padding: '4px 6px',
-            border: '0.5px solid rgba(75, 85, 99, 0.55)',
-            borderRadius: '6px',
-            backgroundColor: '#d1d5db',
             boxSizing: 'border-box',
           }}>
             {audioUrl ? (
-              <div style={{
-                flex: 1,
-                minWidth: 220,
-                overflow: 'hidden',
-                border: '0.5px solid rgba(156, 163, 175, 0.55)',
-                borderRadius: 6,
-                backgroundColor: '#e5e7eb',
-                boxShadow: 'none',
-              }}>
-                <audio
-                  controls
-                  src={audioUrl}
-                  style={{
-                    display: 'block',
-                    width: '100%',
-                    height: 34,
-                    border: 0,
-                    outline: 0,
-                    backgroundColor: 'transparent',
-                  }}
-                />
-              </div>
+              <audio
+                controls
+                preload="metadata"
+                src={audioUrl}
+                style={{ display: 'block', width: '100%' }}
+              />
             ) : (
               <div style={{ 
                 padding: '8px 12px',
@@ -860,16 +838,6 @@ export default function MaxChatMessages({ internalId, chatInfo, provider = 'max'
               }}>
                 🔊 Аудио сообщение
               </div>
-            )}
-            {Number(msg.attachments?.audio?.duration) > 0 && (
-              <span style={{ 
-                fontSize: '11px',
-                color: '#374151',
-                whiteSpace: 'nowrap',
-              }}>
-                {Math.floor(msg.attachments.audio.duration / 60)}:
-                {String(Math.floor(msg.attachments.audio.duration % 60)).padStart(2, '0')}
-              </span>
             )}
           </div>
         );

@@ -3,6 +3,9 @@ const db = require('../models');
 const UserSetting = db.sequelize.models.UserSetting;
 
 const APP_TEXT_SCALE_KEY = 'mobile_text_scale_percent';
+const WEBCHAT_TEXT_SCALE_KEY = 'webchat_text_scale_percent';
+const WEBCHAT_DESKTOP_TEXT_SCALE_KEY = 'webchat_desktop_text_scale_percent';
+const WEBCHAT_MOBILE_TEXT_SCALE_KEY = 'webchat_mobile_text_scale_percent';
 const AUTO_REPLY_KEY = 'mobile_auto_reply';
 const CLIENT_AUTO_REPLY_KEY = 'client_auto_reply';
 const DEFAULT_PRIVACY_POLICY_URL = 'https://artcoupe.pro/privacy-policy.html';
@@ -60,6 +63,47 @@ async function setMyMobileTextScale(req, res) {
     return res.json({ ok: true, percent });
   } catch (err) {
     console.error('setMyMobileTextScale error:', err);
+    return res.status(500).json({ message: 'Server error' });
+  }
+}
+
+async function getMyWebchatTextScale(req, res) {
+  try {
+    const userId = Number(req.user?.id || 0);
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+
+    const mode = req.query?.mode === 'mobile' ? 'mobile' : 'desktop';
+    const key = mode === 'mobile' ? WEBCHAT_MOBILE_TEXT_SCALE_KEY : WEBCHAT_DESKTOP_TEXT_SCALE_KEY;
+    const [row, legacyRow] = await Promise.all([
+      UserSetting.findOne({ where: { userId, key }, attributes: ['value'] }),
+      UserSetting.findOne({ where: { userId, key: WEBCHAT_TEXT_SCALE_KEY }, attributes: ['value'] }),
+    ]);
+
+    return res.json({ mode, percent: normalizePercent(row?.value?.percent ?? legacyRow?.value?.percent) });
+  } catch (err) {
+    console.error('getMyWebchatTextScale error:', err);
+    return res.status(500).json({ message: 'Server error' });
+  }
+}
+
+async function setMyWebchatTextScale(req, res) {
+  try {
+    const userId = Number(req.user?.id || 0);
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+
+    const mode = req.body?.mode === 'mobile' ? 'mobile' : 'desktop';
+    const key = mode === 'mobile' ? WEBCHAT_MOBILE_TEXT_SCALE_KEY : WEBCHAT_DESKTOP_TEXT_SCALE_KEY;
+    const percent = normalizePercent(req.body?.percent);
+    const [row] = await UserSetting.findOrCreate({
+      where: { userId, key },
+      defaults: { userId, key, value: { percent } },
+    });
+
+    row.value = { percent };
+    await row.save();
+    return res.json({ ok: true, mode, percent });
+  } catch (err) {
+    console.error('setMyWebchatTextScale error:', err);
     return res.status(500).json({ message: 'Server error' });
   }
 }
@@ -124,6 +168,8 @@ async function setMyClientAutoReply(req, res) {
 module.exports = {
   getMyMobileTextScale,
   setMyMobileTextScale,
+  getMyWebchatTextScale,
+  setMyWebchatTextScale,
   getMyAutoReply,
   setMyAutoReply,
   getMyClientAutoReply,

@@ -15,8 +15,29 @@ const { Op } = require('sequelize');
 const ffmpeg = require('fluent-ffmpeg');
 const { Buffer } = require('buffer');
 
+try {
+  ffmpeg.setFfmpegPath(require('ffmpeg-static'));
+} catch (error) {
+  console.warn('ffmpeg-static not available, using system ffmpeg if present:', error?.message || error);
+}
+
 const DEBUG = false;
 const log = (...a) => DEBUG && console.log('[uploadWebChatRoute]', ...a);
+
+const uploadExtensionFromMime = (value) => {
+  const mime = String(value || '').trim().toLowerCase().split(';')[0];
+  const extensions = {
+    'audio/mp4': '.m4a',
+    'video/mp4': '.mp4',
+    'audio/webm': '.webm',
+    'video/webm': '.webm',
+    'audio/ogg': '.ogg',
+    'audio/mpeg': '.mp3',
+    'audio/wav': '.wav',
+    'audio/x-wav': '.wav',
+  };
+  return extensions[mime] || '';
+};
 
 // Корень папки uploads (относительно корня проекта)
 const UPLOAD_ROOT = path.join(__dirname, '..', 'uploads');
@@ -53,12 +74,45 @@ const storage = multer.diskStorage({
 
   filename: (_req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    const ext = path.extname(file.originalname) || '';
+    const originalExt = path.extname(String(file.originalname || '')).toLowerCase();
+    const mimeExt = uploadExtensionFromMime(file.mimetype);
+    const ext = mimeExt || (/^\.[a-z0-9]{1,10}$/.test(originalExt) ? originalExt : '');
     cb(null, uniqueSuffix + ext);
   },
 });
 
 const upload = multer({ storage });
+const compatibleAudioJobs = new Map();
+
+function resolveUploadedFile(rawPath) {
+  const relativePath = String(rawPath || '')
+    .trim()
+    .replace(/^https?:\/\/[^/]+/i, '')
+    .replace(/^\/?uploads\/?/i, '')
+    .replace(/^[/\\]+/, '');
+  const absolutePath = path.resolve(UPLOAD_ROOT, relativePath);
+  const relativeToRoot = path.relative(UPLOAD_ROOT, absolutePath);
+  if (!relativePath || relativeToRoot.startsWith('..') || path.isAbsolute(relativeToRoot)) return null;
+  return absolutePath;
+}
+
+function createSafariCompatibleAudio(inputPath, outputPath) {
+  const existingJob = compatibleAudioJobs.get(outputPath);
+  if (existingJob) return existingJob;
+
+  const job = new Promise((resolve, reject) => {
+    ffmpeg(inputPath)
+      .noVideo()
+      .audioCodec('libmp3lame')
+      .audioBitrate('96k')
+      .toFormat('mp3')
+      .on('error', reject)
+      .on('end', resolve)
+      .save(outputPath);
+  }).finally(() => compatibleAudioJobs.delete(outputPath));
+  compatibleAudioJobs.set(outputPath, job);
+  return job;
+}
 
 function fixFilenameEncoding(name) {
   try {
@@ -130,6 +184,31 @@ router.get('/download', (req, res) => {
   });
 });
 
+// A single playback format for recordings created by the native app, Safari,
+// Chrome/Android and desktop browsers. It also repairs old WebM/OGG recordings
+// lazily, so existing messages do not need a database migration.
+router.get('/audio-compatible', async (req, res) => {
+  const inputPath = resolveUploadedFile(req.query.path);
+  if (!inputPath) return res.status(400).json({ error: 'Invalid file path' });
+  if (!fs.existsSync(inputPath) || !fs.statSync(inputPath).isFile()) {
+    return res.status(404).json({ error: 'File not found' });
+  }
+
+  const extension = path.extname(inputPath).toLowerCase();
+  const directlyPlayable = new Set(['.mp3', '.m4a', '.mp4', '.aac', '.wav']);
+  if (directlyPlayable.has(extension)) return res.sendFile(inputPath);
+
+  const outputPath = `${inputPath}.ios.mp3`;
+  try {
+    if (!fs.existsSync(outputPath)) await createSafariCompatibleAudio(inputPath, outputPath);
+    res.type('audio/mpeg');
+    return res.sendFile(outputPath);
+  } catch (error) {
+    console.error('[uploadWebChatRoute] compatible audio conversion failed', error);
+    return res.status(500).json({ error: 'Audio conversion failed' });
+  }
+});
+
 
 
 router.post('/fileFromWebchat', upload.single('file'), async (req, res) => {
@@ -145,6 +224,7 @@ router.post('/fileFromWebchat', upload.single('file'), async (req, res) => {
 
     // Параметры из формы
     const { roomId, chatId, userId: bodyUserId, messageType } = req.body;
+    const clientTempId = String(req.body?.tempId || '').trim().slice(0, 120) || null;
     const messageText = String(req.body?.messageText ?? req.body?.content ?? req.body?.caption ?? '').trim();
     const parsedReplyToMessageId = (() => {
       const raw = req.body?.replyToMessageId ?? req.body?.replyToMessage ?? null;
@@ -356,9 +436,11 @@ router.post('/fileFromWebchat', upload.single('file'), async (req, res) => {
       try { fs.unlinkSync(file.path); } catch (e) { /* ignore */ }
       return res.status(400).json({ error: 'Either chatId or roomId must be provided' });
     }
+    if (clientTempId) savedMessage.setDataValue('tempId', clientTempId);
 
     // Cross-domain bridge relay: mirror media/file/audio/video/image messages
     // for personal chats where peer is synthetic xbridge user.
+    void (async () => {
     try {
       const relayAllowed = !req.body?.bridgeRelay;
       if (relayAllowed && roomId) {
@@ -416,32 +498,34 @@ router.post('/fileFromWebchat', upload.single('file'), async (req, res) => {
     } catch (relayErr) {
       console.warn('[cross-chat][bridge][relay] unexpected:', relayErr?.message || relayErr);
     }
+    })();
 
 
 
     if (roomId) {
-      try {
-        await relayRoomMessageToExternalParticipants({
+      relayRoomMessageToExternalParticipants({
           roomId,
           senderName: user?.name || user?.username || `User ${bodyUserId || ''}` || 'Сотрудник',
           content: savedMessage?.content || '',
           message: savedMessage,
-        });
-      } catch (relayExternalErr) {
+        })
+        .catch((relayExternalErr) => {
         console.warn('[room-external][relay:upload-webchat] failed:', relayExternalErr?.message || relayExternalErr);
-      }
+        });
     }
-    // Emit через socket.io
+    // Сначала дадим upload-запросу завершиться. Если отправить socket-событие
+    // синхронно, вкладка отправителя начинает тяжёлый рендер изображения раньше,
+    // чем успевает обработать XHR.onload (особенно заметно на телефонах).
     const io = getIO();
     if (io) {
-      if (roomId) {
-        io.to(`room-${roomId}`).emit('newRoomMessage', savedMessage);
-        //log('emitted newRoomMessage to', roomId);
-      }
-      if (chatId) {
-        io.to(`chat-${chatId}`).emit('newBossChatMessage', savedMessage);
-        //log('emitted newBossChatMessage to', chatId);
-      }
+      setImmediate(() => {
+        if (roomId) {
+          io.to(`room-${roomId}`).emit('newRoomMessage', savedMessage);
+        }
+        if (chatId) {
+          io.to(`chat-${chatId}`).emit('newBossChatMessage', savedMessage);
+        }
+      });
     } else {
       console.warn('[upload/file] io not found — no socket emit');
     }

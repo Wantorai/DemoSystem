@@ -3,7 +3,7 @@
 
 import React, { useEffect, useState, useContext, useRef, useCallback } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { IoAlertCircleOutline, IoPaperPlaneOutline, IoPeopleOutline, IoPeopleCircleOutline, IoPersonAddOutline } from 'react-icons/io5';
+import { IoAlertCircleOutline, IoPaperPlaneOutline, IoPeopleOutline, IoPeopleCircleOutline, IoPersonAddOutline, IoPin } from 'react-icons/io5';
 import ChatCard from './ChatCard';
 import ExternalChatInviteModal from './ExternalChatInviteModal';
 import RoomParticipantsModal from './RoomParticipantsModal';
@@ -11,21 +11,62 @@ import { formatChatDate, formatChatTime, formatChatTimeOrDate } from './dateForm
 import { AuthContext } from '../../context/AuthContext';
 import { useWebSocket } from '../../components/webchats/SocketProvider';
 
+const CHAT_LIST_CACHE_KEY = 'webchats:chat-list:v1';
+const CHAT_LIST_CACHE_MAX_AGE_MS = 30 * 60 * 1000;
+
+const readChatListCache = (userId) => {
+  if (typeof window === 'undefined' || !userId) return null;
+  try {
+    const cached = JSON.parse(sessionStorage.getItem(CHAT_LIST_CACHE_KEY) || 'null');
+    if (!cached || String(cached.userId) !== String(userId)) return null;
+    if (!Number.isFinite(cached.savedAt) || Date.now() - cached.savedAt > CHAT_LIST_CACHE_MAX_AGE_MS) {
+      sessionStorage.removeItem(CHAT_LIST_CACHE_KEY);
+      return null;
+    }
+    return {
+      chats: Array.isArray(cached.chats) ? cached.chats : [],
+      maxChats: Array.isArray(cached.maxChats) ? cached.maxChats : [],
+      telegramChats: Array.isArray(cached.telegramChats) ? cached.telegramChats : [],
+    };
+  } catch {
+    return null;
+  }
+};
+
+const writeChatListCache = (userId, data) => {
+  if (typeof window === 'undefined' || !userId) return;
+  try {
+    sessionStorage.setItem(CHAT_LIST_CACHE_KEY, JSON.stringify({
+      userId: String(userId),
+      savedAt: Date.now(),
+      chats: Array.isArray(data.chats) ? data.chats : [],
+      maxChats: Array.isArray(data.maxChats) ? data.maxChats : [],
+      telegramChats: Array.isArray(data.telegramChats) ? data.telegramChats : [],
+    }));
+  } catch {
+    // sessionStorage может быть недоступен или переполнен — кеш не критичен.
+  }
+};
+
 /**
  * Компонент ChatList: загружает комнаты и boss-чаты, мержит их и рендерит список.
  * Теперь: суммирует unread и обновляет document.title = `🔔 N MyApp` при изменении данных.
  */
 
-export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = null, chatId = null, onMessageClick = null, maxId = null, telegramId = null, listView = 'list', onActionsReady = null }) {
+export default function ChatList({ onFirstLoaded, searchQuery = '', searchEverywhere = false, roomId = null, chatId = null, onMessageClick = null, maxId = null, telegramId = null, listView = 'list', onActionsReady = null }) {
   const { user, token, isLoading: authLoading } = useContext(AuthContext);
   const router = useRouter();
   const pathname = usePathname();
+  const initialCacheRef = useRef(undefined);
+  if (initialCacheRef.current === undefined) {
+    initialCacheRef.current = readChatListCache(user?.id);
+  }
   const [maxAccessOverride, setMaxAccessOverride] = useState(null);
   const hasMaxAccess = (maxAccessOverride ?? user?.canMax) !== false;
   const [telegramAccessOverride, setTelegramAccessOverride] = useState(null);
   const hasTelegramAccess = (telegramAccessOverride ?? user?.canTelegram) !== false;
-  const [chats, setChats] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [chats, setChats] = useState(() => initialCacheRef.current?.chats || []);
+  const [loading, setLoading] = useState(() => !initialCacheRef.current);
   const [error, setError] = useState(null);
   const { socket } = useWebSocket();
 
@@ -129,12 +170,12 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
       return false;
     }
   });
-  const [maxChats, setMaxChats] = useState([]);
+  const [maxChats, setMaxChats] = useState(() => initialCacheRef.current?.maxChats || []);
   const [loadingMaxChats, setLoadingMaxChats] = useState(false);
   const [maxInviteBusy, setMaxInviteBusy] = useState(false);
   const [maxMembershipBusyById, setMaxMembershipBusyById] = useState({});
   const [telegramChatsExpanded, setTelegramChatsExpanded] = useState(false);
-  const [telegramChats, setTelegramChats] = useState([]);
+  const [telegramChats, setTelegramChats] = useState(() => initialCacheRef.current?.telegramChats || []);
   const [loadingTelegramChats, setLoadingTelegramChats] = useState(false);
   const [telegramInviteBusy, setTelegramInviteBusy] = useState(false);
   const [telegramMembershipBusyById, setTelegramMembershipBusyById] = useState({});
@@ -218,6 +259,8 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
     }
   });
   const [chatContextMenu, setChatContextMenu] = useState(null);
+  const chatLongPressRef = useRef(null);
+  const suppressChatClickRef = useRef(false);
   const [flatArchiveExpanded, setFlatArchiveExpanded] = useState(() => {
     if (typeof window === 'undefined') return false;
     try {
@@ -406,6 +449,25 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
   }, [authLoading, token, apiBase, pickNewestAlert, calcTotalUnread, setTitleWithBadge, ALERTS_BOSS_CHAT_ID]);
 
 
+
+  // AuthContext может восстановить пользователя уже после первого рендера. В этом
+  // случае также поднимаем последний список без ожидания сетевых запросов.
+  useEffect(() => {
+    if (!user?.id || initialCacheRef.current) return;
+    const cached = readChatListCache(user.id);
+    if (!cached) return;
+    initialCacheRef.current = cached;
+    setChats(cached.chats);
+    setMaxChats(cached.maxChats);
+    setTelegramChats(cached.telegramChats);
+    setLoading(false);
+  }, [user?.id]);
+
+  // Сохраняем единый снимок, чтобы при возврате из чата список появился сразу.
+  useEffect(() => {
+    if (!user?.id || loading) return;
+    writeChatListCache(user.id, { chats, maxChats, telegramChats });
+  }, [user?.id, loading, chats, maxChats, telegramChats]);
 
   // fetchChats: вынесенный fetch, возвращает merged chats
   const fetchChats = useCallback(async (opts = {}) => {
@@ -1150,7 +1212,7 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
 
     (async () => {
       if (!mounted) return;
-      await fetchChats();
+      await fetchChats({ silent: Boolean(initialCacheRef.current) });
     })();
 
     return () => { mounted = false; };
@@ -1414,6 +1476,9 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
                   lastMessageAuthor: message?.User?.name ?? c.lastMessageAuthor,
                   lastMessageTime: message?.createdAt ?? message?.updatedAt ?? c.lastMessageTime,
                   updatedAt: message?.createdAt ?? c.updatedAt ?? c.updatedAt,
+                  lastMessageStatus: isFromMe
+                    ? (message?.readStatus || message?.deliveryStatus || 'sent')
+                    : null,
                 };
 
                 const routeOpenActive = routeOpen && tabIsActive;
@@ -1546,16 +1611,27 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
           } catch (e) { console.warn('update title after readStatusUpdated', e); }
             return next;
           });
+        } else {
+          // Для group-чата статус read означает, что сообщение прочитали все.
+          // Получаем агрегированный статус с сервера, а не делаем вывод по одному событию.
+          fetchChats({ silent: true }).catch(() => {});
         }
       } catch (e) {
         console.error('handleReadStatusUpdated error', e);
       }
     };
 
+    const fetchChatsOnMessageUpdate = () => {
+      fetchChats({ silent: true }).catch((error) => {
+        console.warn('Failed to refresh chat preview after message update', error);
+      });
+    };
+
     socket.on('newRoomMessage', handleNewMessage);
     socket.on('newBossChatMessage', handleNewMessage);
     socket.on('readStatusUpdated', handleReadStatusUpdated);
     socket.on('readStatusUpdatedChat', handleReadStatusUpdated);
+    socket.on('messageUpdated', fetchChatsOnMessageUpdate);
 
     return () => {
       try {
@@ -1563,6 +1639,7 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
         socket.off('newBossChatMessage', handleNewMessage);
         socket.off('readStatusUpdated', handleReadStatusUpdated);
         socket.off('readStatusUpdatedChat', handleReadStatusUpdated);
+        socket.off('messageUpdated', fetchChatsOnMessageUpdate);
       } catch (e) { console.error('Socket cleanup error', e); }
     };
   }, [socket, user, calcTotalUnread, setTitleWithBadge, logUnread, roomId, chatId, maxId, fetchChats]); 
@@ -1701,9 +1778,9 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
         const apiBaseLocal = process.env.NEXT_PUBLIC_API_URL || '';
         let url = null;
 
-        if (roomId) {
+        if (!searchEverywhere && roomId) {
           url = `${apiBaseLocal}/web/rooms/${encodeURIComponent(roomId)}/messages?query=${encodeURIComponent(normalizedQuery)}`;
-        } else if (chatId) {
+        } else if (!searchEverywhere && chatId) {
           url = `${apiBaseLocal}/web/boss/chats/${encodeURIComponent(chatId)}/messages?query=${encodeURIComponent(normalizedQuery)}`;
         } else {
           url = `${apiBaseLocal}/web/messages/search?query=${encodeURIComponent(normalizedQuery)}`;
@@ -1744,7 +1821,7 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
       controller.abort();
       clearTimeout(timer);
     };
-  }, [searchQuery, roomId, chatId, token]);
+  }, [searchQuery, searchEverywhere, roomId, chatId, token]);
 
   // ---------------- effect: следим за changes в chats и обновляем title ----------------
   useEffect(() => {
@@ -1767,7 +1844,7 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
   useEffect(() => {
     const onVis = () => {
       if (document.visibilityState === 'visible') {
-        fetchChats().catch(e => console.warn('refresh on visible error', e));
+        fetchChats({ silent: true }).catch(e => console.warn('refresh on visible error', e));
       }
     };
     document.addEventListener('visibilitychange', onVis);
@@ -1840,7 +1917,9 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
 
   // ---------------- РЕНДЕР ----------------
   if (authLoading) return <div style={{ padding: 12 }}>Проверка авторизации...</div>;
-  if (loading) return <div style={{ padding: 12 }}>Загрузка чатов...</div>;
+  if (loading && chats.length === 0 && maxChats.length === 0 && telegramChats.length === 0) {
+    return <div style={{ padding: 12 }}>Загрузка чатов...</div>;
+  }
   if (error) return <div style={{ padding: 12, color: 'red' }}>Ошибка: {error}</div>;
 
   if ((searchQuery || '').trim().length > 0) {
@@ -1936,6 +2015,40 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
   const pinnedSort = (a, b) => pinnedChatKeys.indexOf(getChatPinKey(a)) - pinnedChatKeys.indexOf(getChatPinKey(b));
   const isPinnedChat = (c) => pinnedSet.has(getChatPinKey(c));
   const isImportantChat = (c) => importantSet.has(getChatPinKey(c));
+
+  const cancelChatLongPress = () => {
+    if (!chatLongPressRef.current) return;
+    clearTimeout(chatLongPressRef.current.timer);
+    chatLongPressRef.current = null;
+  };
+
+  const beginChatLongPress = (event, openMenu) => {
+    if (event.pointerType === 'mouse') return;
+    cancelChatLongPress();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const timer = window.setTimeout(() => {
+      chatLongPressRef.current = null;
+      suppressChatClickRef.current = true;
+      window.setTimeout(() => { suppressChatClickRef.current = false; }, 1000);
+      openMenu({ clientX: startX, clientY: startY, preventDefault() {}, stopPropagation() {} });
+    }, 500);
+    chatLongPressRef.current = { timer, startX, startY };
+  };
+
+  const moveChatLongPress = (event) => {
+    const pending = chatLongPressRef.current;
+    if (!pending) return;
+    if (Math.abs(event.clientX - pending.startX) > 10 || Math.abs(event.clientY - pending.startY) > 10) {
+      cancelChatLongPress();
+    }
+  };
+
+  const consumeSuppressedChatClick = () => {
+    if (!suppressChatClickRef.current) return false;
+    suppressChatClickRef.current = false;
+    return true;
+  };
 
   const openChatContextMenu = (event, chat) => {
     event.preventDefault();
@@ -2501,7 +2614,7 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
     const isTelegram = provider === 'telegram';
     const bg = isTelegram ? '#229ED9' : 'linear-gradient(135deg, #1aa7ff 0%, #6b5cff 52%, #9b4dff 100%)';
     return (
-      <div style={{
+      <div className="webchat-avatar" style={{
         width: isTelegram ? 42 : 44,
         height: isTelegram ? 42 : 44,
         borderRadius: isTelegram ? '50%' : 8,
@@ -2588,6 +2701,7 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
     };
 
     const openMaxChat = () => {
+      if (consumeSuppressedChatClick()) return;
       try {
         localStorage.setItem('orderSpace:lastChat', JSON.stringify({ kind: 'max', rawId: String(rawNumericId) }));
       } catch {}
@@ -2597,10 +2711,15 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
     return (
       <div
         key={`max-${rawNumericId}`}
+        className={`webchat-card webchat-external-card ${isPinned ? 'webchat-card-pinned' : ''} ${isActive ? 'webchat-card-active' : ''}`}
         role="button"
         tabIndex={0}
         onClick={openMaxChat}
         onContextMenu={(event) => openExternalChatContextMenu(event, 'max', chat)}
+        onPointerDown={(event) => beginChatLongPress(event, (menuEvent) => openExternalChatContextMenu(menuEvent, 'max', chat))}
+        onPointerMove={moveChatLongPress}
+        onPointerUp={cancelChatLongPress}
+        onPointerCancel={cancelChatLongPress}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
@@ -2641,9 +2760,13 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
               {isPinned && (
-                <span title="Закрепленный чат" style={{ fontSize: 14, lineHeight: 1 }}>
-                  📌
-                </span>
+                <IoPin
+                  title="Закрепленный чат"
+                  aria-label="Закрепленный чат"
+                  size={16}
+                  color={isActive ? '#ffffff' : '#dc2626'}
+                  style={{ flexShrink: 0 }}
+                />
               )}
               {isImportant && (
                 <IoAlertCircleOutline
@@ -2653,7 +2776,7 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
                   style={{ flexShrink: 0 }}
                 />
               )}
-              <span style={{ fontSize: 12, color: isActive ? '#fff' : '#888' }}>
+              <span className="webchat-card-time" style={{ fontSize: 12, color: isActive ? '#fff' : '#888' }}>
                 {timePart}
               </span>
             </div>
@@ -2752,7 +2875,7 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
                   marginTop: '0px',
                 }}
               >
-                {busy ? '...' : 'Освободить чат'}
+                {busy ? '...' : 'Освободить'}
               </button>
             )}
           </div>
@@ -2808,6 +2931,7 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
       whiteSpace: 'nowrap',
       cursor: busy ? 'default' : 'pointer',
       opacity: busy ? 0.7 : 1,
+      marginTop: '0px',
     };
     const timePart = (() => {
       const v = chat?.lastMessageTime || chat?.updatedAt || null;
@@ -2815,6 +2939,7 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
       return formatChatTimeOrDate(v);
     })();
     const openTelegramChat = () => {
+      if (consumeSuppressedChatClick()) return;
       try {
         localStorage.setItem('orderSpace:lastChat', JSON.stringify({ kind: 'telegram', rawId: String(chat.rawId) }));
       } catch {}
@@ -2827,10 +2952,15 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
     return (
       <div
         key={`telegram-${chat.id}`}
+        className={`webchat-card webchat-external-card ${isPinned ? 'webchat-card-pinned' : ''} ${active ? 'webchat-card-active' : ''}`}
         role="button"
         tabIndex={0}
         onClick={openTelegramChat}
         onContextMenu={(event) => openExternalChatContextMenu(event, 'telegram', chat)}
+        onPointerDown={(event) => beginChatLongPress(event, (menuEvent) => openExternalChatContextMenu(menuEvent, 'telegram', chat))}
+        onPointerMove={moveChatLongPress}
+        onPointerUp={cancelChatLongPress}
+        onPointerCancel={cancelChatLongPress}
         onKeyDown={(event) => {
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault();
@@ -2872,9 +3002,13 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
               {isPinned && (
-                <span title="Закрепленный чат" style={{ fontSize: 14, lineHeight: 1 }}>
-                  📌
-                </span>
+                <IoPin
+                  title="Закрепленный чат"
+                  aria-label="Закрепленный чат"
+                  size={16}
+                  color={active ? '#ffffff' : '#dc2626'}
+                  style={{ flexShrink: 0 }}
+                />
               )}
               {isImportant && (
                 <IoAlertCircleOutline
@@ -2884,7 +3018,7 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
                   style={{ flexShrink: 0 }}
                 />
               )}
-              <span style={{ fontSize: 12, color: active ? '#fff' : '#888' }}>
+              <span className="webchat-card-time" style={{ fontSize: 12, color: active ? '#fff' : '#888' }}>
                 {timePart}
               </span>
             </div>
@@ -3013,7 +3147,7 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
                   marginTop: '0px',
                 }}
               >
-                {busy ? '...' : 'Освободить чат'}
+                {busy ? '...' : 'Освободить'}
               </button>
             )}
           </div>
@@ -3533,7 +3667,7 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
             }}
             aria-current={pathname === '/webchats/alerts' ? 'true' : undefined}
             style={{
-              padding: 12,
+              padding: '15px 12px',
               borderBottom: '1px solid #f5f5f5',
               cursor: 'pointer',
               display: 'flex',
@@ -3544,10 +3678,10 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
               transition: 'background .12s ease, border-left .12s ease'
             }}
           >
-            <div style={{
+            <div className="webchat-avatar" style={{
               width: 44,
               height: 44,
-              borderRadius: 10,
+              borderRadius: 999,
               backgroundColor: pathname === '/webchats/alerts' ? '#ffffff33' : '#e97b28',
               display: 'flex',
               alignItems: 'center',
@@ -3837,6 +3971,7 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
                           ? `Владелец: ${chat.assigneeName || chat.assigneeId}`
                           : 'Чат свободен';
                     const openTelegramChat = () => {
+                      if (consumeSuppressedChatClick()) return;
                       try {
                         localStorage.setItem('orderSpace:lastChat', JSON.stringify({
                           kind: 'telegram',
@@ -3862,14 +3997,20 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
                       whiteSpace: 'nowrap',
                       cursor: busy ? 'default' : 'pointer',
                       opacity: busy ? 0.7 : 1,
+                      marginTop: '0px',
                     };
                     return (
                       <div
                         key={`telegram-${chat.id}`}
+                        className="webchat-touch-target"
                         role="button"
                         tabIndex={0}
                         onClick={openTelegramChat}
                         onContextMenu={(event) => openExternalChatContextMenu(event, 'telegram', chat)}
+                        onPointerDown={(event) => beginChatLongPress(event, (menuEvent) => openExternalChatContextMenu(menuEvent, 'telegram', chat))}
+                        onPointerMove={moveChatLongPress}
+                        onPointerUp={cancelChatLongPress}
+                        onPointerCancel={cancelChatLongPress}
                         onKeyDown={(event) => {
                           if (event.key === 'Enter' || event.key === ' ') {
                             event.preventDefault();
@@ -3906,9 +4047,13 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
                               />
                             )}
                             {pinnedSet.has(`telegram:${String(chat.rawId ?? chat.id).replace(/^telegram-/, '')}`) && (
-                              <span title="Закрепленный чат" style={{ fontSize: 14, lineHeight: 1, flexShrink: 0 }}>
-                                📌
-                              </span>
+                              <IoPin
+                                title="Закрепленный чат"
+                                aria-label="Закрепленный чат"
+                                size={16}
+                                color="#dc2626"
+                                style={{ flexShrink: 0 }}
+                              />
                             )}
                           </div>
                         </div>
@@ -4028,7 +4173,7 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
                                 marginTop: 0,
                               }}
                             >
-                              {busy ? '...' : 'Освободить чат'}
+                              {busy ? '...' : 'Освободить'}
                             </button>
                           )}
                         </div>
@@ -4473,10 +4618,12 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
             borderRadius: 10,
             boxShadow: '0 12px 32px rgba(15,23,42,0.16)',
             width: 'max-content',
-            minWidth: 190,
-            maxWidth: 280,
-            padding: 4,
-            overflow: 'hidden',
+            minWidth: 0,
+            maxWidth: 'calc(100vw - 16px)',
+            maxHeight: 'calc(100dvh - 16px)',
+            padding: 3,
+            overflowX: 'hidden',
+            overflowY: 'auto',
           }}
           onClick={(e) => e.stopPropagation()}
         >
@@ -4486,12 +4633,12 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
               onClick={() => togglePinByKey(chatContextMenu.pinKey)}
               style={{
                 width: '100%',
-                height: 38,
+                minHeight: 30,
                 border: 'none',
                 borderRadius: 7,
                 background: 'transparent',
                 textAlign: 'left',
-                padding: '0 12px',
+                padding: '5px 9px',
                 cursor: 'pointer',
                 color: '#111',
                 fontWeight: 500,
@@ -4510,12 +4657,12 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
             onClick={() => toggleImportantByKey(chatContextMenu.pinKey)}
             style={{
               width: '100%',
-              height: 38,
+              minHeight: 30,
               border: 'none',
               borderRadius: 7,
               background: 'transparent',
               textAlign: 'left',
-              padding: '0 12px',
+              padding: '5px 9px',
               cursor: 'pointer',
               color: '#111',
               fontWeight: 500,
@@ -4534,12 +4681,12 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
               onClick={chatContextMenu.type ? renameExternalChatFromContextMenu : renameChatFromContextMenu}
               style={{
                 width: '100%',
-                height: 38,
+                minHeight: 30,
                 border: 'none',
                 borderRadius: 7,
                 background: 'transparent',
                 textAlign: 'left',
-                padding: '0 12px',
+                padding: '5px 9px',
                 cursor: 'pointer',
                 color: '#111',
                 fontWeight: 500,
@@ -4559,12 +4706,12 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
               onClick={chatContextMenu.type ? archiveExternalChatFromContextMenu : archiveRoomFromContextMenu}
               style={{
                 width: '100%',
-                height: 38,
+                minHeight: 30,
                 border: 'none',
                 borderRadius: 7,
                 background: 'transparent',
                 textAlign: 'left',
-                padding: '0 12px',
+                padding: '5px 9px',
                 cursor: 'pointer',
                 color: '#111',
                 fontWeight: 500,
@@ -4584,12 +4731,12 @@ export default function ChatList({ onFirstLoaded, searchQuery = '', roomId = nul
               onClick={chatContextMenu.type ? deleteExternalChatFromContextMenu : deleteRoomFromContextMenu}
               style={{
                 width: '100%',
-                height: 38,
+                minHeight: 30,
                 border: 'none',
                 borderRadius: 7,
                 background: 'transparent',
                 textAlign: 'left',
-                padding: '0 12px',
+                padding: '5px 9px',
                 cursor: 'pointer',
                 color: '#dc2626',
                 fontWeight: 600,

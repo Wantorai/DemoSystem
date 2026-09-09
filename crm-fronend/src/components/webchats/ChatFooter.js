@@ -61,6 +61,7 @@ export default function ChatFooter({
   const fileRef = useRef(null);
   const textareaRef = useRef(null);
   const emojiPickerRef = useRef(null);
+  const lastEmojiTouchAtRef = useRef(0);
 
   // media/recording refs
   const mediaRecorderRef = useRef(null);
@@ -80,6 +81,9 @@ export default function ChatFooter({
   const dragStartYRef = useRef(null);
   const pointerActiveRef = useRef(false);
   const lockedRef = useRef(false);
+  const longPressTimerRef = useRef(null);
+  const longPressTriggeredRef = useRef(false);
+  const recordingStartPendingRef = useRef(false);
 
   const onSendVoiceRef = useRef(onSendVoice);
   useEffect(() => {
@@ -92,6 +96,8 @@ export default function ChatFooter({
 
 
   const LOCK_THRESHOLD = 80; // px to drag up to lock
+  const LONG_PRESS_MS = 300;
+  const MIN_RECORDING_MS = 250;
 
 
 
@@ -114,7 +120,8 @@ export default function ChatFooter({
 
       const onStop = () => {
         try {
-          const blob = new Blob(recordedChunksRef.current, { type: 'audio/webm' });
+          const recordedMimeType = mr.mimeType || recordedChunksRef.current[0]?.type || 'audio/webm';
+          const blob = new Blob(recordedChunksRef.current, { type: recordedMimeType });
           const elapsedMs = recordingStartedAtRef.current
             ? Date.now() - recordingStartedAtRef.current
             : 0;
@@ -164,6 +171,7 @@ export default function ChatFooter({
     handleGlobalPointerMoveRef.current = (e) => {
       if (!pointerActiveRef.current) return;
       if (lockedRef.current) return;
+      if (!recordingStartedAtRef.current) return;
 
       const startY = dragStartYRef.current;
       if (startY == null) return;
@@ -171,10 +179,13 @@ export default function ChatFooter({
       if (dy >= LOCK_THRESHOLD) {
         setLocked(true);
         lockedRef.current = true;
+        pointerActiveRef.current = false;
+        dragStartYRef.current = null;
         // снимем слушатели — через текущие ref-ссылки
         try {
           window.removeEventListener('pointermove', handleGlobalPointerMoveRef.current);
           window.removeEventListener('pointerup', handleGlobalPointerUpRef.current);
+          window.removeEventListener('pointercancel', handleGlobalPointerUpRef.current);
         } catch (err) { console.warn(err); }
       }
     };
@@ -183,18 +194,27 @@ export default function ChatFooter({
       if (!pointerActiveRef.current) return;
       pointerActiveRef.current = false;
       dragStartYRef.current = null;
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+      }
 
       try {
         window.removeEventListener('pointermove', handleGlobalPointerMoveRef.current);
         window.removeEventListener('pointerup', handleGlobalPointerUpRef.current);
+        window.removeEventListener('pointercancel', handleGlobalPointerUpRef.current);
       } catch (err) { console.warn(err); }
 
       if (lockedRef.current) return;
+      if (!longPressTriggeredRef.current || !recordingStartedAtRef.current) return;
+
+      const recordedMs = Date.now() - recordingStartedAtRef.current;
+      longPressTriggeredRef.current = false;
 
       // авто-отправка через ref'ы (всегда актуальные)
       try {
         const blob = await stopRecordingAndGetBlobRef.current?.();
-        if (blob && onSendVoiceRef.current) {
+        if (blob && recordedMs >= MIN_RECORDING_MS && onSendVoiceRef.current) {
           onSendVoiceRef.current(blob, lastRecordingDurationRef.current);
         }
       } catch (err) {
@@ -207,31 +227,53 @@ export default function ChatFooter({
       try {
         window.removeEventListener('pointermove', handleGlobalPointerMoveRef.current);
         window.removeEventListener('pointerup', handleGlobalPointerUpRef.current);
+        window.removeEventListener('pointercancel', handleGlobalPointerUpRef.current);
+        if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
       } catch (e) {console.warn(e)}
     };
     // пустой массив — инициализируется только при mount, не создавая циклов/TDZ
   }, []);
 
   // ---------- pointer down: навешиваем текущие функции (они уже инициализированы выше в useEffect) ----------
-  const onMicPointerDown = async (e) => {
+  const onMicPointerDown = (e) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (pointerActiveRef.current || recordingStartPendingRef.current || mediaRecorderRef.current) return;
+    e.preventDefault();
 
     pointerActiveRef.current = true;
     dragStartYRef.current = e.clientY;
+    longPressTriggeredRef.current = false;
     setLocked(false);
     lockedRef.current = false;
     setPreviewBlob(null);
 
-    const started = await startRecordingInternal(); // оставляем как есть
-    if (!started) {
-      pointerActiveRef.current = false;
-      dragStartYRef.current = null;
-      return;
-    }
-
-    // навешиваем слушатели именно на ссылки из ref.current
+    // Подключаем отпускание сразу, до асинхронного запроса разрешения микрофона.
     window.addEventListener('pointermove', handleGlobalPointerMoveRef.current);
     window.addEventListener('pointerup', handleGlobalPointerUpRef.current);
+    window.addEventListener('pointercancel', handleGlobalPointerUpRef.current);
+
+    longPressTimerRef.current = setTimeout(async () => {
+      longPressTimerRef.current = null;
+      if (!pointerActiveRef.current) return;
+      longPressTriggeredRef.current = true;
+      recordingStartPendingRef.current = true;
+      const started = await startRecordingInternal();
+      recordingStartPendingRef.current = false;
+
+      // Палец мог быть отпущен, пока браузер открывал/проверял микрофон.
+      if (started && !pointerActiveRef.current && !lockedRef.current) {
+        longPressTriggeredRef.current = false;
+        await stopRecordingAndGetBlobRef.current?.();
+      }
+      if (!started) {
+        pointerActiveRef.current = false;
+        dragStartYRef.current = null;
+        longPressTriggeredRef.current = false;
+        window.removeEventListener('pointermove', handleGlobalPointerMoveRef.current);
+        window.removeEventListener('pointerup', handleGlobalPointerUpRef.current);
+        window.removeEventListener('pointercancel', handleGlobalPointerUpRef.current);
+      }
+    }, LONG_PRESS_MS);
   };
 
 
@@ -246,6 +288,9 @@ export default function ChatFooter({
 
 
   const sendLockedRecording = async () => {
+    pointerActiveRef.current = false;
+    longPressTriggeredRef.current = false;
+    dragStartYRef.current = null;
     try {
       // Останавливаем рекордер и получаем blob
       const blob = await stopRecordingAndGetBlobRef.current?.();
@@ -320,6 +365,25 @@ export default function ChatFooter({
     });
   }, [setText, text]);
 
+  const toggleEmojiPicker = useCallback(() => {
+    setIsEmojiOpen((value) => !value);
+  }, []);
+
+  const onEmojiPointerUp = useCallback((event) => {
+    if (event.pointerType === 'mouse') return;
+    event.preventDefault();
+    event.stopPropagation();
+    lastEmojiTouchAtRef.current = Date.now();
+    toggleEmojiPicker();
+  }, [toggleEmojiPicker]);
+
+  const onEmojiClick = useCallback((event) => {
+    // Safari посылает synthetic click после touch/pointerup — не переключаем дважды.
+    if (Date.now() - lastEmojiTouchAtRef.current < 600) return;
+    event.stopPropagation();
+    toggleEmojiPicker();
+  }, [toggleEmojiPicker]);
+
   // Helpers: start media recorder
   const startRecordingInternal = async () => {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -354,6 +418,8 @@ export default function ChatFooter({
   };
 
   const cancelLockedRecording = async () => {
+    pointerActiveRef.current = false;
+    longPressTriggeredRef.current = false;
     // Stop and discard
     await stopRecordingAndGetBlob();
     setPreviewBlob(null);
@@ -362,6 +428,8 @@ export default function ChatFooter({
   };
 
   const pauseLockedRecording = async () => {
+    pointerActiveRef.current = false;
+    longPressTriggeredRef.current = false;
     // Pause = stop & produce preview blob (user can send or delete)
     const blob = await stopRecordingAndGetBlob();
     setPreviewBlob(blob);
@@ -385,6 +453,15 @@ export default function ChatFooter({
         window.removeEventListener('pointermove', handleGlobalPointerMoveRef.current);
         window.removeEventListener('pointerup', handleGlobalPointerUpRef.current);
       } catch (e) { console.warn(e) }
+      if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+      if (recorderTimerRef.current) clearInterval(recorderTimerRef.current);
+      try {
+        const recorder = mediaRecorderRef.current;
+        if (recorder && recorder.state !== 'inactive') recorder.stop();
+        streamRef.current?.getTracks?.().forEach((track) => track.stop());
+      } catch (e) { console.warn(e); }
+      pointerActiveRef.current = false;
+      recordingStartPendingRef.current = false;
     };
   }, []); // пустой deps — cleanup один раз
 
@@ -494,7 +571,7 @@ export default function ChatFooter({
 
 
   return (
-    <div className="w-full border-t border-gray-200 bg-white flex-shrink-0 p-3 relative">
+    <div className={`webchat-footer ${showSend ? 'webchat-footer-has-text' : ''} w-full border-t border-gray-200 bg-white flex-shrink-0 p-3 relative`}>
 
 
       {/* ----------------- Banner редактирования (показываем только при editingMessage) ----------------- */}
@@ -542,23 +619,25 @@ export default function ChatFooter({
       )}
 
 
-      <div className="flex items-end gap-3">
+      <div className="webchat-footer-row flex items-end gap-3">
         {/* Attach */}
-        <button
-          type="button"
-          onClick={onAttachClick}
-          aria-label="Прикрепить файл"
-          title="Прикрепить файл"
-          disabled={isBusy}
-          className="p-1 bg-transparent border-none hover:bg-gray-100 rounded-md transition disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          <IoAttachOutline className="w-8 h-8 text-gray-800" />
-        </button>
+        {!locked && (
+          <button
+            type="button"
+            onClick={onAttachClick}
+            aria-label="Прикрепить файл"
+            title="Прикрепить файл"
+            disabled={isBusy}
+            className="webchat-attach-button p-1 bg-transparent border-none hover:bg-gray-100 rounded-md transition disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <IoAttachOutline className="w-8 h-8 text-gray-800" />
+          </button>
+        )}
 
         <input ref={fileRef} type="file" className="hidden" onChange={handleFileChange} />
 
         {/* Input area */}
-        <div className="flex-1 flex items-center bg-gray-100 rounded-2xl px-3 py-0 min-h-[40px] max-h-[160px]">
+        <div className="webchat-input-box flex-1 flex items-center bg-gray-100 rounded-2xl px-3 py-0 min-h-[40px] max-h-[160px]">
           <textarea
             ref={(el) => {
               if (textareaRef) textareaRef.current = el;
@@ -577,16 +656,17 @@ export default function ChatFooter({
         </div>
 
         {/* Right controls: if previewBlob -> show delete + send; if locked -> cancel + pause; otherwise mic/send */}
-        <div className="flex items-center gap-2 relative">
+        <div className="webchat-compose-actions flex items-center gap-2 relative">
 
           {!previewBlob && !locked && !isRecording && (
-            <div className="relative">
+            <div className="webchat-emoji-control relative">
               <button
                 type="button"
-                onClick={() => setIsEmojiOpen((v) => !v)}
+                onPointerUp={onEmojiPointerUp}
+                onClick={onEmojiClick}
                 aria-label="Открыть эмодзи"
                 title="Эмодзи"
-                className="p-1 bg-transparent border-none hover:bg-gray-100 rounded-md transition"
+                className="webchat-emoji-button p-1 bg-transparent border-none hover:bg-gray-100 rounded-md transition"
               >
                 <span className="text-2xl leading-none">😊</span>
               </button>
@@ -617,7 +697,7 @@ export default function ChatFooter({
 
           {/* Compact lock + arrow badge (left-shifted, block background, bigger arrow) */}
           { (isRecording && !locked) && (
-            <div className="absolute -top-14 right-10 z-50 pointer-events-none w-max flex flex-col items-center">
+            <div className="webchat-recording-lock-hint absolute -top-14 right-10 z-50 pointer-events-none w-max flex flex-col items-center">
               {/* background block with small padding */}
               <div className="bg-white/95 backdrop-blur-sm rounded-md p-1.5 shadow-md flex flex-col items-center">
                 {/* lock badge on top (small) */}
@@ -639,7 +719,7 @@ export default function ChatFooter({
           )}
 
           { locked && (
-            <div className="absolute -top-14 right-10 z-50 pointer-events-none w-max flex flex-col items-center">
+            <div className="webchat-recording-lock-hint absolute -top-14 right-10 z-50 pointer-events-none w-max flex flex-col items-center">
               <div className="bg-white/95 backdrop-blur-sm rounded-md p-1.5 shadow-md flex items-center justify-center">
                 <IoLockClosed className="w-5 h-5 text-gray-800" />
               </div>
@@ -709,7 +789,7 @@ export default function ChatFooter({
               disabled={sending}
               aria-label="Отправить"
               title="Отправить"
-              className="p-1 bg-transparent border-none hover:bg-gray-100 rounded-md transition"
+              className="webchat-send-button p-1 border-none transition"
             >
               {sending ? (
                 <span className="inline-flex items-center justify-center w-8 h-8">
@@ -761,22 +841,21 @@ export default function ChatFooter({
             ) : (
               <button
                 onPointerDown={onMicPointerDown}
-                // onPointerMove={onMicPointerMove}
-                // onPointerUp={onMicPointerUp}
-                // onPointerCancel={onMicPointerUp}
+                onContextMenu={(event) => event.preventDefault()}
                 aria-label={isRecording ? "Запись" : "Нажмите и держите для записи"}
                 title="Нажмите и держите для записи"
-                className="p-1 bg-transparent border-none hover:bg-gray-100 rounded-md transition"
+                className="webchat-mic-button p-1 border-none transition"
+                style={{ touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }}
               >
                 <div className="relative flex items-center justify-center">
                   {/* Пульсирующий синий круг */}
                   {isRecording && (
-                    <span className="absolute w-12 h-12 rounded-full bg-blue-500/70 animate-ping" />
+                    <span className="absolute w-12 h-12 rounded-full bg-red-600/70 animate-ping" />
                   )}
 
                   {/* Статичный синий круг под иконкой, чтобы она не “висела” в воздухе */}
                   {isRecording && (
-                    <span className="absolute w-10 h-10 rounded-full bg-blue-500" />
+                    <span className="absolute w-10 h-10 rounded-full bg-red-600" />
                   )}
 
                   {/* Иконка микрофона поверх */}
@@ -796,12 +875,6 @@ export default function ChatFooter({
         </div>
       </div>
 
-      {isBusy && (
-        <div className="mt-2 flex items-center gap-2 text-xs text-gray-500">
-          <Spinner size={14} />
-          <span>{isUploading ? 'Загрузка файла...' : 'Отправка сообщения...'}</span>
-        </div>
-      )}
     </div>
   );
 }

@@ -16,6 +16,7 @@ const { Op, QueryTypes } = require('sequelize');
 const { createRoomExternalInvitePayload, normalizeKind } = require('../services/roomExternalInvite');
 const { telegramRequest } = require('../services/telegramApi');
 const { buildMaxRoomBotLink } = require('../services/maxInvite');
+const { getUserAvatarColor } = require('../utils/avatarColor');
 
 const SELF_CHAT_NAME = 'Отправка себе';
 const READ_DEBUG_LOGS = String(process.env.READ_DEBUG_LOGS || '').toLowerCase() === 'true';
@@ -51,6 +52,7 @@ const serializeUserWithAvatar = (user) => {
   return {
     ...plain,
     avatar: normalizeAvatarPath(plain.avatar),
+    avatarColor: getUserAvatarColor(plain.id),
   };
 };
 
@@ -931,11 +933,40 @@ const listRoomsForWeb = async (req, res) => {
         through: { attributes: [] }
       });
 
+      let lastMessageStatus = null;
+      if (lastMessage && Number(lastMessage.userId) === Number(userId)) {
+        const otherUsers = roomUsers.filter((member) => Number(member.id) !== Number(userId));
+        if (otherUsers.length === 0) {
+          lastMessageStatus = 'read';
+        } else {
+          const otherIds = otherUsers.map((member) => Number(member.id));
+          const otherMemberships = await RoomUsers.findAll({
+            where: { roomId, userId: { [Op.in]: otherIds } },
+            attributes: ['userId', 'lastReadMessageId'],
+          });
+          const readByAll = otherMemberships.length === otherIds.length
+            && otherMemberships.every((membership) => Number(membership.lastReadMessageId || 0) >= Number(lastMessage.id));
+          if (readByAll) {
+            lastMessageStatus = 'read';
+          } else if (room.type === 'personal' && otherIds.length === 1) {
+            const delivered = await MessageDelivery.findOne({
+              where: { messageId: lastMessage.id, userId: otherIds[0] },
+              attributes: ['messageId'],
+            });
+            lastMessageStatus = delivered ? 'delivered' : 'sent';
+          } else {
+            lastMessageStatus = 'sent';
+          }
+        }
+      }
+
       // По умолчанию название комнаты
       let title = room.name;
       let shouldShow = true;
       let partnerName = null;
       let partnerAvatar = null;
+      let partnerId = null;
+      let partnerAvatarColor = null;
 
       // Если это личный чат
       if (room.type === 'personal') {
@@ -958,6 +989,8 @@ const listRoomsForWeb = async (req, res) => {
           const serializedPartner = serializeUserWithAvatar(partner);
           partnerName = serializedPartner.name;
           partnerAvatar = serializedPartner.avatar || null;
+          partnerId = serializedPartner.id;
+          partnerAvatarColor = serializedPartner.avatarColor;
           
           // Проверяем, разрешены ли чаты с этим пользователем
           if (!isSelfRoom && (partner.canChat === false || partner.system === true)) {
@@ -987,12 +1020,15 @@ const listRoomsForWeb = async (req, res) => {
         lastMessageRaw: last.raw,
         lastMessageAuthor: last.author,
         lastMessageTime: last.time,
+        lastMessageStatus,
         updatedAt: room.updatedAt,
         unread,
         archived: Boolean(membershipMap.get(Number(roomId))?.archivedAt),
         // Добавим для отладки/совместимости
         partnerName: partnerName, // полезно для фронта
         partnerAvatar,
+        partnerId,
+        partnerAvatarColor,
         roomType: room.type, // group/personal
         creatorUserId: room.creatorUserId || null,
         Users: roomUsers.map(serializeUserWithAvatar)

@@ -19,6 +19,7 @@ export default function WebChatsPage() {
 
   useEffect(() => {
     if (pendingFile?.fileId) return;
+    if (typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches) return;
     if (pathname?.match(/^\/webchats\/[^\/]+\/[^\/]+/)) {
       navigatedRef.current = true;
       return;
@@ -74,6 +75,7 @@ export default function WebChatsPage() {
 
   const handleFirstLoaded = useCallback((chats) => {
     if (navigatedRef.current || pendingFile?.fileId) return;
+    if (typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches) return;
     if (!Array.isArray(chats) || chats.length === 0) return;
 
     const first = chats[0];

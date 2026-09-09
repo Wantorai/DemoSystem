@@ -377,7 +377,16 @@ try {
 
 
     // Для передачи файлов с приложения
-    app.use('/uploads', express.static('uploads')); // отдача файлов
+    app.use('/uploads', express.static('uploads', {
+      setHeaders: (res, filePath) => {
+        // Older iOS recordings were accidentally named like
+        // "recording.mp4;codecs=mp4a.40.2". Chrome sniffs them, Safari does not.
+        const normalizedPath = String(filePath || '').replace(/\\/g, '/').toLowerCase();
+        if (normalizedPath.includes('/audio/') && normalizedPath.includes('mp4;codecs=')) {
+          res.setHeader('Content-Type', 'audio/mp4');
+        }
+      },
+    })); // отдача файлов
     app.use('/api/upload', require('./routes/uploadRoutes')); // роут загрузки
 
     // Для передачи файлов с веб версии чата
