@@ -662,7 +662,9 @@ router.post('/fileFromWebchat', upload.single('file'), async (req, res) => {
 
         const senderName = full.User?.name || (`User ${senderId}`);
         const title = `От ${senderName}`;
-        const body = decodedName ? `Файл: ${decodedName}` : (req.body.messageText || 'НС:');
+        const body = ['audio', 'voice'].includes(String(type || '').toLowerCase())
+          ? 'Аудио'
+          : (decodedName || req.body.messageText || 'НС:');
 
         const data = {
             screen: cfg.pushScreen,

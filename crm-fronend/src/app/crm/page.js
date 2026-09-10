@@ -9,6 +9,24 @@ import { toast } from 'react-toastify';
 
 const STATUS_HISTORY_KEY = '__statusHistoryIds';
 
+function useIsMobile(breakpoint = 768) {
+  const getMatches = () => {
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia(`(max-width: ${breakpoint}px), (hover: none) and (pointer: coarse)`).matches;
+  };
+  const [isMobile, setIsMobile] = useState(getMatches);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia(`(max-width: ${breakpoint}px), (hover: none) and (pointer: coarse)`);
+    const update = () => setIsMobile(mediaQuery.matches);
+    update();
+    mediaQuery.addEventListener?.('change', update);
+    return () => mediaQuery.removeEventListener?.('change', update);
+  }, [breakpoint]);
+
+  return isMobile;
+}
+
 function parseStatusHistory(recordLike) {
   const historyRaw = recordLike?.newParams?.[STATUS_HISTORY_KEY];
   const historyArr = Array.isArray(historyRaw)
@@ -36,8 +54,8 @@ export default function CRMPage() {
   const router = useRouter();
   const [statuses, setStatuses] = useState([]);
   const [searchQuery, setSearchQuery] = useState(""); // Поисковый запрос
-  const [sortField, setSortField] = useState('technicName');
-  const [sortOrder, setSortOrder] = useState('asc');
+  const [sortField, setSortField] = useState('serviceDate');
+  const [sortOrder, setSortOrder] = useState('desc');
   const [roles, setRoles] = useState([]);
   const { user } = useContext(AuthContext);
   const [technics, setTechnics] = useState([]); // Список технологов
@@ -56,6 +74,7 @@ export default function CRMPage() {
   const [commentModalField, setCommentModalField] = useState('comment');
   const [commentModalValue, setCommentModalValue] = useState('');
   const [commentModalSaving, setCommentModalSaving] = useState(false);
+  const [expandedMobileRecords, setExpandedMobileRecords] = useState(() => new Set());
   const modalRef = useRef(null);
   const getAuthHeaders = (extra = {}) => {
     const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
@@ -71,18 +90,6 @@ export default function CRMPage() {
     currentRoleId = user.roleId; // Получаем роль юзера)
     cuurentUserId = user.id; // Получаем id юзера
   } 
-
-  function useIsMobile(breakpoint = 768) {
-    const [isMobile, setIsMobile] = useState(false);
-    useEffect(() => {
-      const check = () => setIsMobile(window.innerWidth <= breakpoint);
-      check();
-      window.addEventListener('resize', check);
-      return () => window.removeEventListener('resize', check);
-    }, [breakpoint]);
-    return isMobile;
-  }
-
 
   useEffect(() => {
     async function fetchAll() {
@@ -592,14 +599,27 @@ export default function CRMPage() {
   // Сортируем
   const filteredRecords = filteredRecordsForTechnic
     .filter(record => {
-      const query = searchQuery.toLowerCase();
+      const query = searchQuery.trim().toLowerCase();
+      if (!query) return true;
       return (
-        (record.clientPhone && record.clientPhone.toLowerCase().includes(query)) ||
-        (record.address && record.address.toLowerCase().includes(query))
+        String(record.clientPhone || '').toLowerCase().includes(query) ||
+        String(record.address || '').toLowerCase().includes(query)
       );
     })
     .sort((a, b) => {
       if (!sortField) return 0;
+
+      if (sortField === 'serviceDate') {
+        const rawDateA = getRawFieldValue(a, sortField);
+        const rawDateB = getRawFieldValue(b, sortField);
+        const dateA = rawDateA ? new Date(rawDateA).getTime() : Number.NaN;
+        const dateB = rawDateB ? new Date(rawDateB).getTime() : Number.NaN;
+        const validA = Number.isFinite(dateA);
+        const validB = Number.isFinite(dateB);
+        if (validA !== validB) return validA ? -1 : 1;
+        if (!validA) return 0;
+        return sortOrder === 'desc' ? dateB - dateA : dateA - dateB;
+      }
 
 
       // Специальная обработка для полей-переключателей (дата / null)
@@ -869,19 +889,72 @@ export default function CRMPage() {
           </div>
 
             {isMobile ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {filteredRecords.map(rec => (
+              <div className="crm-mobile-records" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {filteredRecords.length === 0 && (
+                  <div style={{ padding: '20px 12px', textAlign: 'center', color: '#6b7280' }}>
+                    По выбранному фильтру записей нет
+                  </div>
+                )}
+                {filteredRecords.map(rec => {
+                  const recordKey = String(rec.id);
+                  const expanded = expandedMobileRecords.has(recordKey);
+                  const rawAddress = String(getCellValue(rec, 'address', null) || '').trim();
+                  const address = isMasked && rawAddress
+                    ? rawAddress.slice(0, 3) + '*'.repeat(Math.max(0, rawAddress.length - 3))
+                    : rawAddress;
+                  const technicName = String(getCellValue(rec, 'technicName', null) || '').trim();
+                  const technicColor = technics.find((technic) => technic.name === rec.technicName)?.color || '';
+                  return (
                   <div
-                    key={rec.id}
+                    key={recordKey}
+                    className={`crm-mobile-record ${expanded ? 'crm-mobile-record-expanded' : ''}`}
                     style={{
-                      border: '1px solid #ccc',
+                      border: '1px solid #d1d5db',
                       borderRadius: '8px',
-                      padding: '10px',
                       boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-                      cursor: 'pointer',
+                      overflow: 'hidden',
+                      background: '#fff',
                     }}
-                    onClick={() => router.push(`/consult/${rec.id}`)}
                   >
+                    <button
+                      type="button"
+                      className="crm-mobile-record-toggle"
+                      aria-expanded={expanded}
+                      onClick={() => {
+                        setExpandedMobileRecords((current) => {
+                          const next = new Set(current);
+                          if (next.has(recordKey)) next.delete(recordKey);
+                          else next.add(recordKey);
+                          return next;
+                        });
+                      }}
+                      style={{
+                        width: '100%',
+                        minHeight: 48,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 10,
+                        padding: '10px 12px',
+                        border: 0,
+                        background: technicColor || '#fff',
+                        color: technicColor ? '#fff' : '#111827',
+                        textAlign: 'left',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {technicName || 'Технолог не указан'}: {address || 'Адрес не указан'}
+                      </span>
+                      <span aria-hidden="true" style={{ flexShrink: 0, fontSize: 16, transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform 160ms ease' }}>⌄</span>
+                    </button>
+                    {expanded && (
+                    <div
+                      className="crm-mobile-record-details"
+                      style={{ padding: '10px', borderTop: '1px solid #e5e7eb', cursor: 'pointer' }}
+                      onClick={() => router.push(`/consult/${rec.id}`)}
+                    >
                     {activeColumns.map(col => {
 
                       // === Специальные поля с маской ===
@@ -1049,8 +1122,11 @@ export default function CRMPage() {
                         </div>
                       );
                     })}
+                    </div>
+                    )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
           // === привычная таблица для десктопа ===

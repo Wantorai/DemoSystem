@@ -234,7 +234,7 @@ export default function MobileDiagnosticsPage() {
     }
   }, [token]);
 
-  const downloadExport = useCallback(async ({ days = 7, bucket, minDiagVersion = 0 } = {}) => {
+  const downloadExport = useCallback(async ({ days = 7, bucket, minDiagVersion = 0, exportVersion = 0 } = {}) => {
     if (!token) return;
     setRefreshing(true);
     setError('');
@@ -243,6 +243,7 @@ export default function MobileDiagnosticsPage() {
       const normalizedBucket = bucket || (normalizedDays <= 2 ? 'hour' : 'day');
       const params = new URLSearchParams({ days: String(normalizedDays), bucket: normalizedBucket });
       if (minDiagVersion) params.set('minDiagVersion', String(minDiagVersion));
+      if (exportVersion) params.set('exportVersion', String(exportVersion));
       const res = await fetch(`${API_URL}/mobile-diagnostics/export?${params.toString()}`, {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -262,7 +263,8 @@ export default function MobileDiagnosticsPage() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `mobile-diagnostics-${normalizedDays}d${minDiagVersion ? `-diag${minDiagVersion}` : ''}-${new Date().toISOString().slice(0, 10)}.json`;
+      const versionSuffix = exportVersion || minDiagVersion;
+      a.download = `mobile-diagnostics-${normalizedDays}d${versionSuffix ? `-diag${versionSuffix}` : ''}-${new Date().toISOString().slice(0, 10)}.json`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -401,6 +403,16 @@ export default function MobileDiagnosticsPage() {
             >
               <Download size={16} />
               Diag 8 1д
+            </button>
+            <button
+              type="button"
+              onClick={() => downloadExport({ days: 1, bucket: 'hour', minDiagVersion: 8, exportVersion: 9 })}
+              disabled={refreshing}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-800 transition hover:bg-slate-50 disabled:opacity-60"
+              title="Скачать диагностику за последние 24 часа с разрезами all/activeOnly по Wi-Fi, cellular, carrier и endpoint. Поля добавлены в export как Diag 9, мобильный билд не нужен."
+            >
+              <Download size={16} />
+              Diag 9 1д
             </button>
           </div>
         </div>

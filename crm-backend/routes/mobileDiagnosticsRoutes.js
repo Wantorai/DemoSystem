@@ -783,9 +783,129 @@ const hasDiagnosticsVersionAtLeast = (event, minVersion) => {
   return version != null && version >= minVersion;
 };
 
+const isActiveForegroundApiRequest = (networkContext) =>
+  networkContext.appState === 'active' &&
+  networkContext.apiStartedInBackground !== true &&
+  networkContext.apiBackgroundedDuringRequest !== true &&
+  networkContext.apiAppStateChangedDuringRequest !== true;
+
+const createApiBreakdownRow = (parts) => ({
+  key: parts.filter(Boolean).join(' | '),
+  appKey: parts[0] || 'unknown',
+  networkType: parts[1] || null,
+  carrier: parts[2] || null,
+  cellularGeneration: parts[3] || null,
+  method: parts[4] || null,
+  path: parts[5] || null,
+  count: 0,
+  latencies: [],
+  serverLatencies: [],
+  overheads: [],
+  queueWaits: [],
+  inFlightAtStart: [],
+  maxInFlight: [],
+  appStates: new Map(),
+  statuses: new Set(),
+  devices: new Set(),
+  users: new Set(),
+  disconnectedCount: 0,
+  unreachableCount: 0,
+  expensiveCount: 0,
+  apiStartedInBackgroundCount: 0,
+  apiBackgroundedDuringRequestCount: 0,
+  apiAppStateChangedDuringRequestCount: 0,
+  firstSeenAt: null,
+  lastSeenAt: null,
+});
+
+const addApiBreakdownSample = (map, parts, sample) => {
+  const key = parts.map((part) => safeText(part, 180) || '-').join('|');
+  const row = map.get(key) || createApiBreakdownRow(parts);
+  row.count += 1;
+  row.latencies.push(sample.apiLatencyMs);
+  if (sample.serverDurationMs != null) {
+    row.serverLatencies.push(sample.serverDurationMs);
+    row.overheads.push(Math.max(0, sample.apiLatencyMs - sample.serverDurationMs));
+  }
+  if (sample.queueWaitMs != null) row.queueWaits.push(sample.queueWaitMs);
+  if (sample.inFlightAtStart != null) row.inFlightAtStart.push(sample.inFlightAtStart);
+  if (sample.maxInFlight != null) row.maxInFlight.push(sample.maxInFlight);
+  incrementMapValue(row.appStates, sample.networkContext.appState);
+  if (sample.apiStatus != null) row.statuses.add(sample.apiStatus);
+  if (sample.deviceId) row.devices.add(sample.deviceId);
+  if (sample.userId) row.users.add(sample.userId);
+  if (sample.networkContext.isConnected === false) row.disconnectedCount += 1;
+  if (sample.networkContext.isInternetReachable === false) row.unreachableCount += 1;
+  if (sample.networkContext.isConnectionExpensive === true) row.expensiveCount += 1;
+  if (sample.networkContext.apiStartedInBackground === true) row.apiStartedInBackgroundCount += 1;
+  if (sample.networkContext.apiBackgroundedDuringRequest === true) row.apiBackgroundedDuringRequestCount += 1;
+  if (sample.networkContext.apiAppStateChangedDuringRequest === true) row.apiAppStateChangedDuringRequestCount += 1;
+  row.firstSeenAt = !row.firstSeenAt || new Date(sample.occurredAt).getTime() < new Date(row.firstSeenAt).getTime()
+    ? sample.occurredAt
+    : row.firstSeenAt;
+  row.lastSeenAt = !row.lastSeenAt || new Date(sample.occurredAt).getTime() > new Date(row.lastSeenAt).getTime()
+    ? sample.occurredAt
+    : row.lastSeenAt;
+  map.set(key, row);
+};
+
+const apiBreakdownRows = (map, limit = 200) =>
+  Array.from(map.values())
+    .map((row) => ({
+      key: row.key,
+      appKey: row.appKey,
+      networkType: row.networkType,
+      carrier: row.carrier,
+      cellularGeneration: row.cellularGeneration,
+      method: row.method,
+      path: row.path,
+      count: row.count,
+      avgLatencyMs: average(row.latencies),
+      p95LatencyMs: percentile(row.latencies, 95),
+      maxLatencyMs: maxValue(row.latencies),
+      avgServerDurationMs: average(row.serverLatencies),
+      p95ServerDurationMs: percentile(row.serverLatencies, 95),
+      maxServerDurationMs: maxValue(row.serverLatencies),
+      serverSamples: row.serverLatencies.length,
+      avgClientOverheadMs: average(row.overheads),
+      p95ClientOverheadMs: percentile(row.overheads, 95),
+      maxClientOverheadMs: maxValue(row.overheads),
+      avgQueueWaitMs: average(row.queueWaits),
+      p95QueueWaitMs: percentile(row.queueWaits, 95),
+      maxQueueWaitMs: maxValue(row.queueWaits),
+      avgInFlightAtStart: average(row.inFlightAtStart),
+      maxInFlight: maxValue(row.maxInFlight.length ? row.maxInFlight : row.inFlightAtStart),
+      appStates: mapToSortedObject(row.appStates),
+      disconnectedCount: row.disconnectedCount,
+      unreachableCount: row.unreachableCount,
+      expensiveConnectionCount: row.expensiveCount,
+      apiStartedInBackgroundCount: row.apiStartedInBackgroundCount,
+      apiBackgroundedDuringRequestCount: row.apiBackgroundedDuringRequestCount,
+      apiAppStateChangedDuringRequestCount: row.apiAppStateChangedDuringRequestCount,
+      devices: row.devices.size,
+      users: row.users.size,
+      statuses: Array.from(row.statuses).sort((a, b) => a - b),
+      firstSeenAt: row.firstSeenAt,
+      lastSeenAt: row.lastSeenAt,
+    }))
+    .sort((a, b) =>
+      (b.p95LatencyMs || 0) - (a.p95LatencyMs || 0) ||
+      (b.avgLatencyMs || 0) - (a.avgLatencyMs || 0) ||
+      b.count - a.count
+    )
+    .slice(0, limit);
+
 const buildPeriodApiExport = (events) => {
   const byAppMap = new Map();
   const endpointMap = new Map();
+  const networkMap = new Map();
+  const carrierMap = new Map();
+  const networkEndpointMap = new Map();
+  const carrierEndpointMap = new Map();
+  const activeNetworkMap = new Map();
+  const activeCarrierMap = new Map();
+  const activeNetworkEndpointMap = new Map();
+  const activeCarrierEndpointMap = new Map();
   const issues = [];
   const socketEvents = [];
 
@@ -978,6 +1098,33 @@ const buildPeriodApiExport = (events) => {
       ? occurredAt
       : row.lastSeenAt;
     endpointMap.set(endpointKey, row);
+
+    const networkType = networkContext.networkType || 'unknown';
+    const carrier = networkContext.carrier || (networkType === 'cellular' ? 'unknown-carrier' : 'not-cellular');
+    const cellularGeneration = networkContext.cellularGeneration || (networkType === 'cellular' ? 'unknown-generation' : 'not-cellular');
+    const apiSample = {
+      apiLatencyMs,
+      serverDurationMs,
+      queueWaitMs,
+      inFlightAtStart,
+      maxInFlight,
+      apiStatus,
+      networkContext,
+      deviceId: plain.deviceId,
+      userId: plain.userId,
+      occurredAt,
+    };
+    addApiBreakdownSample(networkMap, [appKey, networkType], apiSample);
+    addApiBreakdownSample(carrierMap, [appKey, networkType, carrier, cellularGeneration], apiSample);
+    addApiBreakdownSample(networkEndpointMap, [appKey, networkType, null, null, apiEndpoint.method, apiEndpoint.path], apiSample);
+    addApiBreakdownSample(carrierEndpointMap, [appKey, networkType, carrier, cellularGeneration, apiEndpoint.method, apiEndpoint.path], apiSample);
+
+    if (isActiveForegroundApiRequest(networkContext)) {
+      addApiBreakdownSample(activeNetworkMap, [appKey, networkType], apiSample);
+      addApiBreakdownSample(activeCarrierMap, [appKey, networkType, carrier, cellularGeneration], apiSample);
+      addApiBreakdownSample(activeNetworkEndpointMap, [appKey, networkType, null, null, apiEndpoint.method, apiEndpoint.path], apiSample);
+      addApiBreakdownSample(activeCarrierEndpointMap, [appKey, networkType, carrier, cellularGeneration, apiEndpoint.method, apiEndpoint.path], apiSample);
+    }
   }
 
   return {
@@ -1038,6 +1185,20 @@ const buildPeriodApiExport = (events) => {
         (b.avgLatencyMs || 0) - (a.avgLatencyMs || 0) ||
         b.count - a.count
       ),
+    apiNetworkBreakdown: {
+      all: {
+        byNetwork: apiBreakdownRows(networkMap, 100),
+        byCarrier: apiBreakdownRows(carrierMap, 100),
+        byNetworkEndpoint: apiBreakdownRows(networkEndpointMap, 300),
+        byCarrierEndpoint: apiBreakdownRows(carrierEndpointMap, 300),
+      },
+      activeOnly: {
+        byNetwork: apiBreakdownRows(activeNetworkMap, 100),
+        byCarrier: apiBreakdownRows(activeCarrierMap, 100),
+        byNetworkEndpoint: apiBreakdownRows(activeNetworkEndpointMap, 300),
+        byCarrierEndpoint: apiBreakdownRows(activeCarrierEndpointMap, 300),
+      },
+    },
     issues: issues
       .sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime())
       .slice(0, 200),
@@ -1347,6 +1508,7 @@ router.get('/mobile-diagnostics/export', auth, requireInternalAdmin, async (req,
     const apiExport = buildPeriodApiExport(events);
     const payload = {
       generatedAt: new Date().toISOString(),
+      exportSchemaVersion: 9,
       range: {
         from: from.toISOString(),
         to: to.toISOString(),
@@ -1361,11 +1523,16 @@ router.get('/mobile-diagnostics/export', auth, requireInternalAdmin, async (req,
         events: events.length,
         apps: apiExport.byApp.length,
         slowApiEndpoints: apiExport.slowApiEndpoints.length,
+        apiNetworkBreakdown: {
+          activeNetworkEndpoint: apiExport.apiNetworkBreakdown.activeOnly.byNetworkEndpoint.length,
+          activeCarrierEndpoint: apiExport.apiNetworkBreakdown.activeOnly.byCarrierEndpoint.length,
+        },
         issues: apiExport.issues.length,
         socketEvents: apiExport.socketEvents.length,
       },
       byApp: apiExport.byApp,
       slowApiEndpoints: apiExport.slowApiEndpoints.slice(0, 200),
+      apiNetworkBreakdown: apiExport.apiNetworkBreakdown,
       history: buildHistory(events, bucket),
       compare: comparePeriods(events),
       issues: apiExport.issues,
@@ -1380,6 +1547,7 @@ router.get('/mobile-diagnostics/export', auth, requireInternalAdmin, async (req,
         'Diag 6 добавляет networkTypes, appStates, cellularGenerations, carriers и net flags для отличия backend тормозов от проблем сети/VPN.',
         'Diag 7 добавляет socketEvents: reason, transport, reconnect duration, connect errors и fallback details.',
         'Diag 8 добавляет apiBackgroundedDuringRequest и socketBackgroundedDuringDisconnect, чтобы отделять реальные задержки от сна/background телефона.',
+        'Diag 9 export добавляет apiNetworkBreakdown: разрезы all/activeOnly по network, carrier и endpoint для сравнения Wi-Fi против cellular без background/sleep.',
       ],
     };
 

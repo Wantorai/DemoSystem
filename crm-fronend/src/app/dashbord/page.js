@@ -67,12 +67,12 @@ export default function DashboardPage() {
   const [configs, setConfigs] = useState([]);
   const [activeTab, setActiveTab] = useState('');
   const [range, setRange] = useState(() => {
-    const saved = localStorage.getItem('dashboard_range');
+    const saved = typeof window !== 'undefined' ? localStorage.getItem('dashboard_range') : null;
     return saved ? Number(saved) : 60; // 60 — значение по умолчанию
   });
 
   const [granularity, setGranularity] = useState(() => {
-    return localStorage.getItem('dashboard_granularity') || 'week'; // 'week' по умолчанию
+    return (typeof window !== 'undefined' ? localStorage.getItem('dashboard_granularity') : null) || 'week'; // 'week' по умолчанию
   });
   const [chartData, setChartData] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -694,9 +694,9 @@ export default function DashboardPage() {
   // Вспомогательный компонент для кнопок
   const ChartControls = () => (
 
-    <div className="flex flex-wrap gap-4 mb-6 items-center">
+    <div className="dashboard-controls mb-6 flex flex-wrap items-center gap-4">
       {/* фильтр по технологам */}
-      <div>
+      <div className="dashboard-tech-filter">
         <label htmlFor="tech-select" className="mr-2">Технолог:</label>
         <select
           id="tech-select"
@@ -714,6 +714,7 @@ export default function DashboardPage() {
       </div>
 
     {/* <div className="flex flex-wrap gap-2 mb-6"> */}
+      <div className="dashboard-range-controls flex flex-wrap items-center gap-2">
       {[7, 30, 60, 90, 180, 365].map(r => (
         <button key={r} onClick={() => handleSetRange(r)}
           className={`px-3 py-1 rounded ${range === r ? 'os-primary-bg text-white' : 'bg-gray-200'}`}>
@@ -727,6 +728,8 @@ export default function DashboardPage() {
       <span className="px-3 py-1 rounded border border-gray-200 bg-white text-sm text-gray-700">
         На графике: {getYearsLabel(range)}
       </span>
+      </div>
+      <div className="dashboard-granularity-controls flex flex-wrap items-center gap-2">
       <button onClick={() => handleSetGranularity('day')}
         className={`px-3 py-1 rounded ${granularity === 'day' ? 'os-primary-bg text-white' : 'bg-gray-200'}`}>
         По дням
@@ -739,6 +742,7 @@ export default function DashboardPage() {
         className={`px-3 py-1 rounded ${granularity === 'month' ? 'os-primary-bg text-white' : 'bg-gray-200'}`}>
         По месяцам
       </button>
+      </div>
     </div>
   );
 
@@ -1065,14 +1069,14 @@ export default function DashboardPage() {
           </LineChart>
           {selectedBreakdown && (
             <div
-              className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+              className="dashboard-breakdown-modal fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
               onClick={() => setSelectedBreakdown(null)}
             >
               <div
-                className="flex max-h-[85vh] w-full max-w-4xl flex-col rounded bg-white shadow-xl"
+                className="dashboard-breakdown-dialog flex max-h-[85vh] w-full max-w-4xl flex-col rounded bg-white shadow-xl"
                 onClick={(e) => e.stopPropagation()}
               >
-                <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-5 py-4">
+                <div className="dashboard-breakdown-header flex items-start justify-between gap-4 border-b border-gray-200 px-5 py-4">
                   <div>
                     <div className="text-lg font-semibold text-gray-900">{selectedBreakdown.date}</div>
                     <div className="mt-1 text-sm text-gray-600">{selectedBreakdown.label}</div>
@@ -1099,9 +1103,9 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                <div className="min-h-0 overflow-y-auto px-5 py-4">
+                <div className="dashboard-breakdown-content min-h-0 overflow-y-auto px-5 py-4">
                   {selectedBreakdown.rows.length > 0 ? (
-                    <div className="overflow-hidden rounded border border-gray-200">
+                    <div className="dashboard-breakdown-table overflow-auto rounded border border-gray-200">
                       <table className="w-full table-fixed border-collapse text-sm">
                         <colgroup>
                           <col className="w-11" />
@@ -1171,11 +1175,11 @@ export default function DashboardPage() {
 
   return (
 
-    <div className="p-6">
+    <div className="dashboard-page p-6">
       <h1 className="text-2xl font-semibold mb-4">Дашборд отчётов</h1>
 
       {/* Табуляция */}
-      <div className="flex gap-2 mb-4">
+      <div className="dashboard-tabs mb-4 flex gap-2">
         {sortedConfigs.map((c) => {
           const isActive = activeTab === c.key;
           return (
@@ -1201,7 +1205,8 @@ export default function DashboardPage() {
       
       {/* График — ChartWithMeasuredSize это серии, LEgacy это старый вариант */}
       {cfg && (
-        <div className="w-full h-96 bg-white rounded shadow p-4">
+        <div className="dashboard-chart-scroll w-full overflow-x-auto rounded bg-white shadow">
+        <div className="dashboard-chart h-96 min-w-0 p-4">
           {!renderIsLegacy ? (
           <ChartWithMeasuredSize
             chartData={chartData}
@@ -1280,6 +1285,7 @@ export default function DashboardPage() {
             </ResponsiveContainer>
             // === end LEGACY ===
           )}
+        </div>
         </div>
       )}
     </div>
