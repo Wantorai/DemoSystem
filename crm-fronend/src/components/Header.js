@@ -258,9 +258,18 @@ const Header = () => {
 
   // Получаем данные по технологам
   useEffect(() => {
+  if (!token || !user) {
+      setLoading(false);
+      return undefined;
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 12000);
   const fetchData = async () => {
       try {
-          const technicsResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/technics`);
+          const technicsResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/technics`, {
+            signal: controller.signal,
+          });
           setTechnics(await technicsResponse.json());
           if (!technicsResponse.ok) {
             throw new Error("Ошибка при загрузке технологов");
@@ -268,13 +277,19 @@ const Header = () => {
           // console.log("configResponses", configResponses);
 
         } catch (err) {
+          if (err.name === 'AbortError') return;
           setError(err.message);
         } finally {
+          clearTimeout(timeoutId);
           setLoading(false);
         }
       };
       fetchData();
-  }, [] );
+      return () => {
+        clearTimeout(timeoutId);
+        controller.abort();
+      };
+  }, [token, user] );
 
 
 
@@ -507,12 +522,12 @@ const Header = () => {
   //   return <Spinner />;
   // }
 
-  // пока инициализация не завершена — можно возвращать Spinner (чтобы не дергался UI),
-  // либо null если хотите полностью ничего не показывать
-  if (!initialized || loading) return <Spinner />; // или: return <Spinner />;
+  // До завершения проверки сессии и для гостя Header не должен перекрывать
+  // публичную страницу полноэкранным спиннером.
+  if (!initialized || !user) return null;
 
-  // если инициализация есть, но user нет — скрываем хидер
-  if (!user) return null;
+  // Спиннер Header нужен только внутри уже авторизованного интерфейса.
+  if (loading) return <Spinner />;
 
 
   return (

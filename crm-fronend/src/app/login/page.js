@@ -4,6 +4,7 @@ import { useState, useContext } from "react";
 import { AuthContext } from "../../context/AuthContext";
 import { useRouter } from "next/navigation";
 import Spinner from "../../components/Spinner";
+import "./login.css";
 
 export default function LoginPage() {
   const [name, setName] = useState("");
@@ -61,13 +62,16 @@ if (loading) {
 }
 
   return (
-    <div>
+    <main className="login-page">
+      <section className="login-card">
       <h2>Вход в систему</h2>
-      <form onSubmit={handleLogin}>
-        <div>
+      <form className="login-form" onSubmit={handleLogin}>
+        <div className="login-fields">
         <input
           type="text"
           placeholder="Имя пользователя"
+          autoComplete="username"
+          inputMode="text"
           value={name}
           onChange={(e) => setName(e.target.value)}
           required
@@ -75,6 +79,7 @@ if (loading) {
         <input
           type="password"
           placeholder="Пароль"
+          autoComplete="current-password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           required
@@ -87,63 +92,8 @@ if (loading) {
           <div style={{ marginTop: 10, color: "#b91c1c" }}>{error}</div>
         ) : null}
       </form>
-    </div>
+      </section>
+    </main>
   );
 }
 
-
-
-// "use client";
-
-// import { useState, useContext } from "react";
-// import {AuthContext} from "../../context/AuthContext";
-// import { useRouter } from "next/navigation";
-
-// export default function LoginPage() {
-//   const [name, setName] = useState("");
-//   const [password, setPassword] = useState("");
-//   const { login } = useContext(AuthContext);
-//   const router = useRouter();
-
-//   const handleLogin = async (e) => {
-//     e.preventDefault();
-
-//     const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/login`, {
-//       method: "POST",
-//       headers: { "Content-Type": "application/json" },
-//       body: JSON.stringify({ name, password }),
-//     });
-
-//     if (res.ok) {
-//       const data = await res.json();
-//       console.log('Токен: ', data.token);
-//       login(data.token);
-//       router.push("/main"); // После входа перенаправляем в админку
-//     } else {
-//       toast("Ошибка авторизации");
-//     }
-//   };
-
-//   return (
-//     <div>
-//       <h2>Вход в систему</h2>
-//       <form onSubmit={handleLogin}>
-//         <input
-//           type="text"
-//           placeholder="Имя пользователя"
-//           value={name}
-//           onChange={(e) => setName(e.target.value)}
-//           required
-//         />
-//         <input
-//           type="password"
-//           placeholder="Пароль"
-//           value={password}
-//           onChange={(e) => setPassword(e.target.value)}
-//           required
-//         />
-//         <button type="submit">Войти</button>
-//       </form>
-//     </div>
-//   );
-// }

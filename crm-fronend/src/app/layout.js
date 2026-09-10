@@ -19,7 +19,10 @@ export default function RootLayout({ children }) {
   const pathname = usePathname();
   const [titles, setTitles] = useState({});
   const [isLoaded, setIsLoaded] = useState(false);
-  const hideHeader = pathname === '/privacy-policy';
+  const hideHeader =
+    pathname === '/login' ||
+    pathname === '/403' ||
+    pathname === '/privacy-policy';
 
 
   // Функция для получения заголовков с сервера

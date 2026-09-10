@@ -14,6 +14,38 @@ const AUTH_RETRY_DELAYS_MS = [800, 2000, 5000];
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const fetchWithTimeout = async (url, options = {}, timeoutMs = 12000) => {
+  const timeoutController = new AbortController();
+  const parentSignal = options.signal;
+  const abortFromParent = () => timeoutController.abort();
+  let timedOut = false;
+
+  if (parentSignal?.aborted) {
+    timeoutController.abort();
+  } else {
+    parentSignal?.addEventListener("abort", abortFromParent, { once: true });
+  }
+
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    timeoutController.abort();
+  }, timeoutMs);
+
+  try {
+    return await fetch(url, { ...options, signal: timeoutController.signal });
+  } catch (error) {
+    if (timedOut) {
+      const timeoutError = new Error(`Request timed out after ${timeoutMs}ms`);
+      timeoutError.name = "TimeoutError";
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+    parentSignal?.removeEventListener("abort", abortFromParent);
+  }
+};
+
 const isUnauthorizedStatus = (status) => status === 401 || status === 403;
 
 const AuthProvider = ({ children }) => {
@@ -65,7 +97,7 @@ const AuthProvider = ({ children }) => {
             "Content-Type": "application/json",
           };
 
-          const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/me?_=${ts}`, {
+          const res = await fetchWithTimeout(`${process.env.NEXT_PUBLIC_API_URL}/auth/me?_=${ts}`, {
             headers: authHeaders,
             cache: "no-store",
             signal,
@@ -91,7 +123,7 @@ const AuthProvider = ({ children }) => {
             return;
           }
 
-          const permissionsRes = await fetch(
+          const permissionsRes = await fetchWithTimeout(
             `${process.env.NEXT_PUBLIC_API_URL}/role_permissions/${roleNum}?_=${ts}`,
             {
               headers: authHeaders,
@@ -112,7 +144,7 @@ const AuthProvider = ({ children }) => {
           const allowedPermissions = permissionsData.filter((p) => p.allowed);
           const permissionIds = allowedPermissions.map((p) => p.permissionId);
 
-          const linksRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/permissions?_=${ts}`, {
+          const linksRes = await fetchWithTimeout(`${process.env.NEXT_PUBLIC_API_URL}/permissions?_=${ts}`, {
             headers: {
               Authorization: `Bearer ${token}`,
               "Content-Type": "application/json",
@@ -143,7 +175,8 @@ const AuthProvider = ({ children }) => {
 
           const isLastAttempt = attempt === AUTH_RETRY_DELAYS_MS.length;
           if (isLastAttempt) {
-            console.warn("Не удалось обновить авторизацию, сессия сохранена для повторной попытки:", error);
+            console.warn("Не удалось обновить авторизацию, выполняется переход на страницу входа:", error);
+            logout();
             return;
           }
 

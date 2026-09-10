@@ -1,0 +1,79 @@
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  color-scheme: light;
+  background: #f8fafc;
+  color: #111827;
+}
+
+.login-card {
+  width: min(100%, 420px);
+  padding: 24px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+}
+
+.login-card h2 {
+  margin: 0 0 20px;
+  color: #111827;
+}
+
+.login-form,
+.login-fields {
+  display: grid;
+  gap: 12px;
+}
+
+.login-form input {
+  width: 100%;
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid #94a3b8;
+  border-radius: 8px;
+  background-color: #ffffff;
+  color: #111827;
+  caret-color: #111827;
+  -webkit-text-fill-color: #111827;
+  font-size: 16px;
+  line-height: 1.25;
+  opacity: 1;
+}
+
+.login-form input::placeholder {
+  color: #64748b;
+  -webkit-text-fill-color: #64748b;
+  opacity: 1;
+}
+
+.login-form input:focus {
+  border-color: #2563eb;
+  outline: 2px solid rgba(37, 99, 235, 0.25);
+  outline-offset: 1px;
+}
+
+.login-form input:-webkit-autofill,
+.login-form input:-webkit-autofill:hover,
+.login-form input:-webkit-autofill:focus {
+  -webkit-text-fill-color: #111827;
+  caret-color: #111827;
+  box-shadow: 0 0 0 1000px #ffffff inset;
+  transition: background-color 9999s ease-out 0s;
+}
+
+.login-form button[type="submit"] {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 0;
+  border: 0;
+  border-radius: 8px;
+  background: #2563eb;
+  color: #ffffff;
+  font-size: 16px;
+  font-weight: 600;
+}
