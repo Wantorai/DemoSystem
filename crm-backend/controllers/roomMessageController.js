@@ -233,6 +233,29 @@ const getMessages = async (req, res) => {
 
     // ---- 2. Условия выборки сообщений (как было) ----
     const where = { roomId };
+    if (String(req.query.recovery) === '1') {
+      try {
+        return res.json(await require('../services/chatRecoveryPage')({
+          query: req.query, model: RoomMessage, where, include: buildMessageIncludeForSearch(),
+          decorate: rows => attachRoomReactions(rows, currentUserId),
+          readState: async (ids, ceiling) => {
+            const others = await RoomUsers.findAll({ where: { roomId, userId: { [Op.ne]: currentUserId } }, attributes: ['userId', 'lastReadMessageId'] });
+            const values = others.map(row => Math.max(0, Math.min(ceiling, Number(row.lastReadMessageId) || 0)));
+            if (room.type === 'personal') {
+              const deliveries = ids.length && others.length ? await MessageDelivery.findAll({
+                where: { userId: others[0].userId, messageId: { [Op.in]: ids } }, attributes: ['messageId'],
+              }) : [];
+              return { otherUserLastReadId: values[0] ?? null, deliveredMessageIds: deliveries.map(row => Number(row.messageId)) };
+            }
+            return { minOtherUserLastReadId: values.length ? Math.min(...values) : null };
+          },
+        }));
+      } catch (error) {
+        if (error.status === 400) return res.status(400).json({ message: error.message });
+        throw error;
+      }
+    }
+
 
     const beforeIdSafe = toSafeDbMessageId(beforeId);
     const afterIdSafe = toSafeDbMessageId(afterId);

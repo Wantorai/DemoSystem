@@ -111,6 +111,28 @@ async function getBossMessages(req, res) {
       andClauses.push({ createdAt: { [Op.gte]: cutoff } });
     }
 
+
+    if (String(req.query.recovery) === '1') {
+      try {
+        const scope = { ...whereClause, ...(andClauses.length ? { [Op.and]: andClauses } : {}) };
+        return res.json(await require('../services/chatRecoveryPage')({
+          query: req.query, model: BossMessage, where: scope,
+          include: [
+            { model: User, attributes: ['id', 'name', 'avatar'] },
+            { model: BossMessage, as: 'replyToMessage', include: [{ model: User, attributes: ['id', 'name', 'avatar'] }] },
+          ],
+          decorate: rows => attachBossReactions(rows, currentUserId),
+          readState: async (_ids, ceiling) => {
+            const others = await BossChatUsers.findAll({ where: { chatId, userId: { [Op.ne]: currentUserId } }, attributes: ['userId', 'lastReadMessageId'] });
+            return { otherUserReadMap: Object.fromEntries(others.map(row => [row.userId, Math.max(0, Math.min(ceiling, Number(row.lastReadMessageId) || 0))])) };
+          },
+        }));
+      } catch (error) {
+        if (error.status === 400) return res.status(400).json({ message: error.message });
+        throw error;
+      }
+    }
+
     if (query) {
       whereClause[Op.or] = [
         { content: { [Op.iLike]: `%${query}%` } },
