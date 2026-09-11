@@ -842,8 +842,10 @@ io.on('connection', async (socket) => {
 
   // --- Boss чаты и сообщения ---
   // Подключение к boss-чату
-  socket.on('joinBossChat', async (chatId) => {
+  socket.on('joinBossChat', async (chatId, options) => {
     socket.join(`chat-${chatId}`);
+    // New clients load bounded history over HTTP. Legacy clients keep their protocol.
+    if (options?.history === false) return;
 
     // Загрузка истории сообщений
     try {

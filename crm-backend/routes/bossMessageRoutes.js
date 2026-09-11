@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const auth = require('../middleware/authMiddleware');
+const { getBossFolderSummaries } = require('../controllers/bossFolderSummaryController');
+router.post('/app/boss/folders/summary', auth, getBossFolderSummaries);
 const {
   getBossMessages,
   createBossMessage, getBossMessagesWeb, getBossMessageFolders, updateBossMessage, toggleBossMessageReaction

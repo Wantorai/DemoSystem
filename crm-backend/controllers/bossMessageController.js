@@ -6,7 +6,7 @@ const BossChatUsers = db.sequelize.models.BossChatUsers;
 const BossMessageReaction = db.sequelize.models.BossMessageReaction;
 const PushToken    = db.sequelize.models.PushToken;
 const { sendPushNotification } = require('../services/sendPushNotification');
-const { Op, fn, col } = require('sequelize');
+const { Op, fn, col, literal } = require('sequelize');
 const getIO = require("../socket").getIO;
 const CHAT_TRACE_LOGS = String(process.env.CHAT_TRACE_LOGS || '').toLowerCase() === 'true';
 const chatTraceLog = (...args) => {
@@ -122,9 +122,14 @@ async function getBossMessages(req, res) {
     // Cursor: если beforeId передан — выбираем сообщения старше (createdAt < pivot.createdAt)
     if (beforeId) {
       // сначала найдём pivot message чтобы получить его createdAt (без него сравнение по id тоже можно, но менее точно)
-      const pivot = await BossMessage.findByPk(beforeId);
+      const pivot = await BossMessage.findOne({ where: { id: beforeId, chatId } });
       if (pivot) {
-        andClauses.push({ createdAt: { [Op.lt]: pivot.createdAt } });
+        // Keep PostgreSQL timestamp precision; JavaScript Date truncates microseconds.
+        const pivotTime = literal(`(SELECT "createdAt" FROM boss_messages WHERE id = ${Number(pivot.id)})`);
+        andClauses.push({ [Op.or]: [
+          { createdAt: { [Op.lt]: pivotTime } },
+          { createdAt: { [Op.eq]: pivotTime }, id: { [Op.lt]: pivot.id } },
+        ] });
       } else {
         // если pivot не найден — вернём пустой массив
         return res.json([]);
@@ -133,19 +138,23 @@ async function getBossMessages(req, res) {
 
     // Optionally support afterId (получить более новые сообщения)
     if (afterId) {
-      const pivot = await BossMessage.findByPk(afterId);
+      const pivot = await BossMessage.findOne({ where: { id: afterId, chatId } });
       if (pivot) {
-        andClauses.push({ createdAt: { [Op.gt]: pivot.createdAt } });
+        const pivotTime = literal(`(SELECT "createdAt" FROM boss_messages WHERE id = ${Number(pivot.id)})`);
+        andClauses.push({ [Op.or]: [
+          { createdAt: { [Op.gt]: pivotTime } },
+          { createdAt: { [Op.eq]: pivotTime }, id: { [Op.gt]: pivot.id } },
+        ] });
       }
     }
     if (andClauses.length > 0) whereClause[Op.and] = andClauses;
 
 
-    let order = [['createdAt', 'DESC']];
+    let order = [['createdAt', 'DESC'], ['id', 'DESC']];
     if (beforeId) {
-      order = [['createdAt', 'DESC']];
+      order = [['createdAt', 'DESC'], ['id', 'DESC']];
     } else if (afterId) {
-      order = [['createdAt', 'ASC']];
+      order = [['createdAt', 'ASC'], ['id', 'ASC']];
     }
 
     const messages = await BossMessage.findAll({
