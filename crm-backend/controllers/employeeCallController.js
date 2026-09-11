@@ -125,6 +125,15 @@ const resolvePersonalPeer = async (roomId, callerId) => {
   };
 };
 
+const mediaConnectionForUser = async (callId, user) => {
+  const media = await createParticipantToken(callId, user);
+  return {
+    mediaProvider: media.mediaProvider,
+    serverUrl: media.serverUrl,
+    token: media.token,
+  };
+};
+
 const startCall = async (req, res) => {
   try {
     // Validate configuration before ringing another employee.
@@ -145,6 +154,7 @@ const startCall = async (req, res) => {
       mediaType: requestedMediaType,
       onTimeout: announceEndedCall,
     });
+    const mediaConnection = await mediaConnectionForUser(call.callId, req.user);
 
     const configuredBaseUrl = String(
       process.env.CALL_REACHABILITY_PUBLIC_BASE_URL || ''
@@ -194,7 +204,7 @@ const startCall = async (req, res) => {
       }
     }
 
-    return res.status(201).json(call);
+    return res.status(201).json({ ...call, mediaConnection });
   } catch (error) {
     return fail(res, error);
   }
@@ -234,9 +244,10 @@ const getCall = async (req, res) => {
 
 const acceptCall = async (req, res) => {
   try {
+    const mediaConnection = await mediaConnectionForUser(req.params.callId, req.user);
     const call = answerCall(req.params.callId, req.user.id, announceEndedCall);
     emitToParticipants(call, 'call:accepted');
-    return res.json(call);
+    return res.json({ ...call, mediaConnection });
   } catch (error) {
     return fail(res, error);
   }

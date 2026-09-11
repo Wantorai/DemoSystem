@@ -192,7 +192,7 @@ router.post("/log", async (req, res) => {
 
 
 // Контроллер для загрузки файлов
-router.post("/file", upload.single("file"), async (req, res) => {
+const handleFileUpload = async (req, res) => {
 
   //console.log('[UPLOADROUTES] start');
 
@@ -1180,7 +1180,13 @@ router.post("/file", upload.single("file"), async (req, res) => {
     console.error("Upload error:", err);
     return res.status(500).json({ error: err.message });
   }
-});
+};
+
+router.post('/file', upload.single('file'), handleFileUpload);
+router.use('/resumable', require('../services/resumableUploads')({
+  auth: require('../middleware/authMiddleware'), models: require('../models'), handleUpload: handleFileUpload,
+  ensureRoomAllowsMessage, ensureRoomChatNotArchived, isMediaUploadCancelled,
+}));
 
 
 // Функция для поиска chatId по тексту лога из БАЗИСА
