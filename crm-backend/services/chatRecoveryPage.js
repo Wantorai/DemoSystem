@@ -1,5 +1,6 @@
 'use strict';
 const { Op } = require('sequelize');
+const { boundRecoveryPayload } = require('./boundHistoryPayload');
 
 // Opt-in mode on existing authenticated history routes. ID cursors do not lose
 // rows with equal createdAt or a removed pivot. No changes to ordinary history.
@@ -32,9 +33,9 @@ module.exports = async function chatRecoveryPage({ query, model, where, include,
   const found = new Set(knownRows.map(row => Number(row.id)));
   const merged = new Map(page.map(row => [Number(row.id), row]));
   knownRows.forEach(row => merged.set(Number(row.id), row));
-  return {
+  return boundRecoveryPayload({
     messages: await decorate([...merged.values()]),
     ...(readState ? await readState([...merged.keys()], ceiling) : {}),
     recovery: { version: 1, cursor, ceiling, hasMore, checkedIds: known, missingIds: known.filter(id => !found.has(id)) },
-  };
+  }, query, page.map(row => Number(row.id)), after);
 };

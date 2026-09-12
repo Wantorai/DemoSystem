@@ -1,3 +1,4 @@
+const boundHistoryPayload = require('../services/boundHistoryPayload');
 const db = require('../models');
 const RoomMessage = db.sequelize.models.RoomMessage;
 const BossMessage = db.sequelize.models.BossMessage;
@@ -263,7 +264,14 @@ const getMessages = async (req, res) => {
     if (beforeIdSafe) {
       const pivot = await RoomMessage.findByPk(beforeIdSafe);
       if (pivot) {
-        where.createdAt = { [Op.lt]: pivot.createdAt };
+        if (req.query.maxResponseBytes && !queryText) {
+          // Preserve timestamp precision and ties when splitting a byte-bounded page.
+          const stamp = db.sequelize.literal('(SELECT "createdAt" FROM "RoomMessages" WHERE id = ' + Number(pivot.id) + ')');
+          where[Op.and] = [{ [Op.or]: [
+            { createdAt: { [Op.lt]: stamp } },
+            { createdAt: { [Op.eq]: stamp }, id: { [Op.lt]: Number(pivot.id) } },
+          ] }];
+        } else { where.createdAt = { [Op.lt]: pivot.createdAt }; }
       } else {
         return res.json([]);
       }
@@ -272,7 +280,14 @@ const getMessages = async (req, res) => {
     if (afterIdSafe) {
       const pivot = await RoomMessage.findByPk(afterIdSafe);
       if (pivot) {
-        where.createdAt = { [Op.gt]: pivot.createdAt };
+        if (req.query.maxResponseBytes && !queryText) {
+          // Preserve timestamp precision and ties when splitting a byte-bounded page.
+          const stamp = db.sequelize.literal('(SELECT "createdAt" FROM "RoomMessages" WHERE id = ' + Number(pivot.id) + ')');
+          where[Op.and] = [{ [Op.or]: [
+            { createdAt: { [Op.gt]: stamp } },
+            { createdAt: { [Op.eq]: stamp }, id: { [Op.gt]: Number(pivot.id) } },
+          ] }];
+        } else { where.createdAt = { [Op.gt]: pivot.createdAt }; }
       }
     }
 
@@ -297,6 +312,7 @@ const getMessages = async (req, res) => {
       // более новые сообщения относительно pivot
       order = [['createdAt', 'ASC']];
     }
+    if (req.query.maxResponseBytes && !queryText) order.push(['id', afterIdSafe ? 'ASC' : 'DESC']);
     const messages = encryptedSearchFallback
       ? await findMessagesByDecryptedQuery({
           roomId,
@@ -349,7 +365,13 @@ const getMessages = async (req, res) => {
 
         // 4.2 ID сообщений текущего пользователя, доставленных собеседнику
         const deliveries = await MessageDelivery.findAll({
-          where: { userId: otherUserId },
+          // Opt-in for mobile history: legacy clients retain the original response.
+          where: {
+            userId: otherUserId,
+            ...(req.query.deliveryScope === 'page'
+              ? { messageId: { [Op.in]: messages.map(message => Number(message.id)) } }
+              : {}),
+          },
           include: [
             {
               model: RoomMessage,
@@ -402,7 +424,7 @@ const getMessages = async (req, res) => {
       topMessageIds: messagesWithReactions.slice(-5).map(m => m?.id), // ASC -> последние 5
     });
 
-    res.json({
+    res.json(boundHistoryPayload({
       messages: messagesWithReactions,
       // Для личного чата
       ...(room.type === 'personal' && {
@@ -413,7 +435,7 @@ const getMessages = async (req, res) => {
       ...(room.type === 'group' && {
         minOtherUserLastReadId,
       }),
-    });
+    }, req.query));
   } catch (err) {
     console.error('getMessages error:', err);
     res.status(500).json({ message: 'Server error' });

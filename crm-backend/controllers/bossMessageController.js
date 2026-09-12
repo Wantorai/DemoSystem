@@ -1,3 +1,4 @@
+const boundHistoryPayload = require('../services/boundHistoryPayload');
 const db = require('../models');
 const BossMessage  = db.sequelize.models.BossMessage;
 const BossChat = db.sequelize.models.BossChat;
@@ -247,13 +248,13 @@ async function getBossMessages(req, res) {
       }
     }
 
-    return res.json({
+    return res.json(boundHistoryPayload({
       messages: messagesWithReactions,
       otherUserLastReadId,
       minOtherUserLastReadId,
       maxOtherUserLastReadId,
       otherUserReadMap,
-    });
+    }, req.query));
   } catch (err) {
     console.error('getBossMessages error:', err);
     res.status(500).json({ message: 'Server error' });
