@@ -113,7 +113,73 @@ function renderTextWithLinks(value) {
   });
 }
 
+function CollapsibleMessageText({ text }) {
+  const source = String(text || '');
+  // Bound both React element creation and browser layout, even for old oversized messages.
+  const needsDownload = source.length > 20000;
+  const preview = source.slice(0, 4000).split('\n', 10).join('\n');
+  const contentRef = useRef(null);
+  const [expanded, setExpanded] = useState(false);
+  const [hasOverflow, setHasOverflow] = useState(false);
+
+  useLayoutEffect(() => {
+    const content = contentRef.current;
+    if (!content) return;
+
+    const measure = () => {
+      const lineHeight = parseFloat(window.getComputedStyle(content).lineHeight);
+      setHasOverflow(content.getBoundingClientRect().height > lineHeight * 10 + 1);
+    };
+
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [text, expanded]);
+
+  return (
+    <div style={{ lineHeight: 1.5 }}>
+      <div style={expanded ? undefined : { maxHeight: '15em', overflow: 'hidden' }}>
+        <div ref={contentRef} className="whitespace-pre-wrap break-words">
+          {renderTextWithLinks(expanded ? source.slice(0, 20000) : preview)}
+        </div>
+      </div>
+      {(hasOverflow || source.length > preview.length) && (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          className="mt-1 block text-xs font-medium text-blue-700 hover:underline"
+          onClick={(event) => {
+            event.stopPropagation();
+            setExpanded((value) => !value);
+          }}
+        >
+          {expanded ? 'Свернуть' : needsDownload ? 'Показать больше' : 'Показать полностью'}
+        </button>
+      )}
+      {needsDownload && (
+        <button
+          type="button"
+          className="mt-1 block text-xs font-medium text-blue-700 hover:underline"
+          onClick={(event) => {
+            event.stopPropagation();
+            const url = URL.createObjectURL(new Blob([source], { type: 'text/plain;charset=utf-8' }));
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'message.txt';
+            link.click();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+          }}
+        >
+          Скачать полный текст
+        </button>
+      )}
+    </div>
+  );
+}
+
 function parseSiteCallbackMessage(value) {
+  if (String(value || '').length > 20000) return null;
   const lines = String(value || '').split('\n').map((line) => line.trim()).filter(Boolean);
   if (lines[0] !== 'Заказ обратного звонка с сайта') return null;
 
@@ -2650,8 +2716,13 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
 
   // обновлённый sendMessage (с учетом редактирования сообщений)
   const sendMessage = async () => {
+    if (sending) return;
     const trimmed = (text || '').trim();
     if (!trimmed && !editingMessage) return;
+    if (trimmed.length > 10000) {
+      toast.info('Сообщение слишком длинное (максимум 10 000 символов). Отправьте текст файлом.');
+      return;
+    }
     setSending(true);
 
     try {
@@ -2684,6 +2755,7 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
 
         try {
           const res = await fetch(url, opts);
+          if (res.status === 413) throw new Error('Слишком большой запрос. Сократите текст или отправьте его файлом.');
           if (!res.ok) {
             const textErr = await res.text().catch(() => '');
             throw new Error(`Update failed: ${res.status} ${res.statusText} ${textErr}`);
@@ -2711,7 +2783,6 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
       }
 
       // --- РЕЖИМ ОТПРАВКИ НОВОГО СООБЩЕНИЯ ---
-      setText('');
       const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
@@ -2732,10 +2803,17 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
 
       const urls = postMessageCandidates(kind, id);
       const res = await fetch(urls[0], opts);
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({}));
+        throw new Error(res.status === 413
+          ? 'Слишком большой запрос. Сократите текст или отправьте его файлом.'
+          : error.error || `Ошибка сервера (${res.status})`);
+      }
 
       let saved;
       try {
         saved = await res.json();
+        setText((current) => current === text ? '' : current);
         setReplyDraft(null);
       } catch (e) {
         console.error('[sendMessage] failed parsing json', e);
@@ -5437,7 +5515,7 @@ const MessageItem = React.memo(function MessageItem({ message, messagesById = {}
                   {parseSiteCallbackMessage(getReadableMessageText(message, "")) ? (
                     <SiteCallbackCard content={getReadableMessageText(message, "")} />
                   ) : (
-                    renderTextWithLinks(getReadableMessageText(message, ""))
+                    <CollapsibleMessageText text={getReadableMessageText(message, "")} />
                   )}
                   {wasMessageEdited(message) && (
                     <span className="ml-1 text-xs text-gray-400">
@@ -5545,7 +5623,7 @@ const MessageItem = React.memo(function MessageItem({ message, messagesById = {}
               </a>
               {!!imageDescription && (
                 <div className="mt-2 text-sm whitespace-pre-wrap break-words">
-                  {renderTextWithLinks(imageDescription)}
+                  <CollapsibleMessageText text={imageDescription} />
                 </div>
               )}
             </div>

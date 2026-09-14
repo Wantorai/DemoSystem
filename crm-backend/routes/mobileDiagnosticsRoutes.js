@@ -19,6 +19,8 @@ const {
 } = require('../services/mobileDiagnosticsRuntime');
 const { getApiPerformanceSnapshot } = require('../services/apiPerformanceRuntime');
 
+const { diagnosticContext, exportMeasurements } = require('../services/diagnosticsMeasurementsExport');
+
 const router = express.Router();
 const routeStartedAt = new Date().toISOString();
 const MOBILE_DIAGNOSTICS_LOGS = String(process.env.MOBILE_DIAGNOSTICS_LOGS || '').toLowerCase() === 'true';
@@ -188,6 +190,7 @@ const safeObject = (value) => {
 };
 
 const safeNumber = (value) => {
+  if (value == null || typeof value === 'boolean' || (typeof value === 'string' && !value.trim())) return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 };
@@ -947,6 +950,8 @@ const buildPeriodApiExport = (events) => {
       const networkContext = networkContextFromEvent(plain, metrics, state);
       const socketContext = socketContextFromEvent(plain, metrics, state);
       issues.push({
+        ...diagnosticContext(plain),
+        apiRequestPriority: state.apiRequestPriority || null,
         appKey,
         severity: plain.severity,
         eventType: plain.eventType,
@@ -992,6 +997,7 @@ const buildPeriodApiExport = (events) => {
       const networkContext = networkContextFromEvent(plain, metrics, state);
       const socketContext = socketContextFromEvent(plain, metrics, state);
       socketEvents.push({
+        ...diagnosticContext(plain),
         appKey,
         severity: plain.severity,
         message: plain.message,
@@ -1508,7 +1514,8 @@ router.get('/mobile-diagnostics/export', auth, requireInternalAdmin, async (req,
     const apiExport = buildPeriodApiExport(events);
     const payload = {
       generatedAt: new Date().toISOString(),
-      exportSchemaVersion: 9,
+      exportSchemaVersion: 10,
+      ...exportMeasurements(events),
       range: {
         from: from.toISOString(),
         to: to.toISOString(),
@@ -1540,7 +1547,7 @@ router.get('/mobile-diagnostics/export', auth, requireInternalAdmin, async (req,
       notes: [
         'slowApiEndpoints агрегированы за весь выбранный период, а не только за последний час.',
         'minDiagVersion фильтрует события по state.diagnosticsSchemaVersion.',
-        'Client latency - полное время на мобильном устройстве.',
+        'Client latency - время клиента после выхода из очереди; queue wait учитывается отдельно.',
         'Server duration - время backend handler из x-api-duration-ms.',
         'Overhead - client latency минус server duration.',
         'Queue wait - ожидание клиентского лимитера безопасных API-запросов.',

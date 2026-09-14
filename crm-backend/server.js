@@ -12,7 +12,7 @@ const { ChatMessage, RoomMessage, User, RoomUsers, UserConsultChat, BossMessage,
   
 const express = require('express');
 const cors = require('cors');
-const bodyParser = require('body-parser');
+const { handlePayloadTooLarge } = require('./middleware/handlePayloadTooLarge');
 const http = require('http');
 const { init: initSocket } = require('./socket');
 const { v4: uuidv4 } = require('uuid');
@@ -136,13 +136,6 @@ app.use((req, _res, next) => {
   next();
 });
 
-// Добавляем middleware для обработки JSON
-app.use(express.json());  // Это важно для парсинга тела запроса как JSON
-// Для Express < 4.16
-app.use(bodyParser.json());
-
-app.use(express.urlencoded({ extended: true }));
-
 // Поддержка Cross-Origin Resource Sharing
 app.use(cors({
     origin: corsOrigins,
@@ -150,6 +143,10 @@ app.use(cors({
     allowedHeaders: ['Content-Type','Authorization','x-support-source'],
     exposedHeaders: ['x-api-duration-ms'],
 }));
+// CORS must also be present on parser errors so web clients can read the 413 response.
+app.use(express.json({ limit: '100kb' }));
+app.use(express.urlencoded({ extended: true }));
+app.use(handlePayloadTooLarge);
 app.use(apiPerformanceMiddleware);
 
 // --- РЕСТ-эндпоинты ---

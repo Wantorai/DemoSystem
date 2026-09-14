@@ -414,6 +414,16 @@ export default function MobileDiagnosticsPage() {
               <Download size={16} />
               Diag 9 1д
             </button>
+              <button
+              type="button"
+              onClick={() => downloadExport({ days: 1, bucket: 'hour', minDiagVersion: 8, exportVersion: 10 })}
+              disabled={refreshing}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-800 transition hover:bg-slate-50 disabled:opacity-60"
+              title="OTA-версия, приоритет API и измерения кэша. События Diag 8+ сохранены для сравнения; новые измерения поступают после OTA с Diag 9."
+            >
+              <Download size={16} />
+              Diag 10 1д
+            </button>
           </div>
         </div>
 

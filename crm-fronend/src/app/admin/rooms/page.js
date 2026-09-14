@@ -1,9 +1,11 @@
 // crm-fronend\src\app\admin\rooms\page.js
 'use client';
 
-import { useState, useEffect, useContext, useCallback } from 'react';
+import { useState, useEffect, useContext, useCallback, useRef } from 'react';
 import { toast } from 'react-toastify';
 import { AuthContext } from "@/context/AuthContext"
+import ChatDirectory from './ChatDirectory';
+import styles from './rooms.module.css';
 
 const APP_PRIMARY_COLOR_FIELD = 'appPrimaryColor';
 const APP_PRIMARY_COLOR_DEFAULT = '#E5A430';
@@ -18,6 +20,7 @@ const normalizeHexColor = (value) => {
 };
 
 export default function AdminRoomsPage() {
+  const formRef = useRef(null);
 
   const [chatType, _setChatType] = useState('room');
   const [chatId, setChatId]         = useState(null);
@@ -178,13 +181,17 @@ export default function AdminRoomsPage() {
   const onEdit = (chat) => {
     setChatId(chat.id);
     setChatName(chat.name);
-    setSelectedUsers(new Set(chat.Users.map((u) => u.id.toString())));
+    setSelectedUsers(new Set((chat.Users || []).map((u) => u.id.toString())));
     setBossFoldersMode(Boolean(chat.mode));
     setBossRetentionDays(
       chat?.retentionDays == null || chat?.retentionDays === ''
         ? ''
         : String(chat.retentionDays)
     );
+    if (formRef.current) {
+      formRef.current.open = true;
+      formRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
   };
 
 
@@ -454,15 +461,16 @@ export default function AdminRoomsPage() {
 
 
 return (
-  <div style={{ maxWidth: 800, margin: '0 auto', padding: 20 }}>
-    <h1>Создание чат‑групп</h1>
+  <div className={styles.page}>
+    <h1>Управление чатами</h1>
 
-    <div style={{ border: '1px solid #ccc', padding: 16, marginBottom: 16 }}>
-      <h2 style={{ marginTop: 0 }}>Общие настройки</h2>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+    <details className={styles.panel}>
+      <summary>Общие настройки</summary>
+      <div className={styles.panelBody}>
+      <div className={styles.settingsGrid}>
         <div>
           <h3 style={{ marginTop: 0 }}>Цвет приложения</h3>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div className={styles.colorControls}>
             <input
               type="color"
               value={normalizeHexColor(appPrimaryColor) || APP_PRIMARY_COLOR_DEFAULT}
@@ -496,7 +504,7 @@ return (
           <div style={{ marginTop: 8, color: '#666', fontSize: 13 }}>
             Основной цвет
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12 }}>
+          <div className={styles.colorControls} style={{ marginTop: 12 }}>
             <input
               type="color"
               value={normalizeHexColor(outgoingBubbleColor) || OUTGOING_BUBBLE_COLOR_DEFAULT}
@@ -560,12 +568,14 @@ return (
           </div>
         </div>
       </div>
-    </div>
+      </div>
+    </details>
 
     {/* ► Тип чата */}
-    <div style={{ marginBottom: 16 }}>
-      <label style={{ marginRight: 8 }}>Тип чата:</label>
+    <div className={styles.typeControl}>
+      <label htmlFor="chat-type">Тип чата:</label>
       <select
+        id="chat-type"
         value={chatType}
         onChange={e => setChatType(e.target.value)}
         style={{ padding: 8 }}
@@ -577,12 +587,13 @@ return (
     </div>
 
     {/* ► Форма создания/редактирования */}
-    <div style={{ border: '1px solid #ccc', padding: 16, marginBottom: 24 }}>
-      <h2>
+    <details ref={formRef} className={styles.panel}>
+      <summary>
         {chatType === 'consult'
           ? 'Доступ к консультациям'
           : `${chatId ? 'Редактировать' : 'Новый'} ${chatType === 'boss' ? 'boss‑чат' : 'чат‑группа'}`}
-      </h2>
+      </summary>
+      <div className={styles.panelBody}>
 
             {/* Название */}
       {chatType !== 'consult' && (
@@ -590,7 +601,8 @@ return (
           placeholder="Имя чат‑группы"
           value={chatName}
           onChange={e => setChatName(e.target.value)}
-          style={{ width: '-webkit-fill-available', padding: 8, marginBottom: 12 }}
+          aria-label="Имя чат-группы"
+          style={{ width: '100%', padding: 8, marginBottom: 12 }}
         />
       )}
 
@@ -638,7 +650,7 @@ return (
       {/* Список пользователей */}
       <div style={{ maxHeight: 200, overflowY: 'auto', marginBottom: 12 }}>
         {users.map(u => (
-          <label key={u.id} style={{ display:'block' }}>
+          <label key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 44 }}>
             <input
               type="checkbox"
               checked={selectedUsers.has(u.id)}
@@ -650,10 +662,11 @@ return (
       </div>
 
       <div style={{ marginBottom: 12, fontStyle: 'italic' }}>
-        ** Можно выбрать из разных ролей, затем нажать «Создать». **
+        Можно выбрать пользователей из разных ролей. Выбрано: {selectedUsers.size}.
       </div>
 
       {/* Кнопки */}
+      <div className={styles.formActions}>
       <button onClick={handleSubmit} style={{ padding: '8px 16px' }}>
         {chatType === 'consult'
           ? 'Сохранить доступ'
@@ -662,12 +675,14 @@ return (
       {chatId && (
         <button
           onClick={resetForm}
-          style={{ marginLeft: 12, padding: '8px 16px' }}
+          style={{ padding: '8px 16px' }}
         >
           Отмена
         </button>
       )}
-    </div>
+      </div>
+      </div>
+    </details>
 
     {/* ► Список существующих */}
     <div>
@@ -678,152 +693,16 @@ return (
         <p>
           Выбрано пользователей: {selectedUsers.size} из {consultAccessRows.length}
         </p>
-      ) : chats.length === 0 ? (
-        <p>Еще не создано</p>
       ) : (
-        <ul style={{ listStyle: 'none', padding: 0 }}>
-          {chats.map(c => (
-            <li
-              key={c.id}
-              style={{
-                marginBottom: 12,
-                borderBottom: '1px solid #eee',
-                paddingBottom: 8
-              }}
-            >
-              {/* Пометка boss-чата */}
-              <strong>
-                {c.name}
-                {chatType === 'boss' && (
-                  <>
-                    <span style={{
-                      marginLeft: 8,
-                      padding: '2px 6px',
-                      fontSize: 12,
-                      backgroundColor: '#ffd700',
-                      borderRadius: 4
-                    }}>
-                      BOSS
-                    </span>
-                    {Boolean(c.mode) && (
-                      <span style={{
-                        marginLeft: 6,
-                        padding: '2px 6px',
-                        fontSize: 12,
-                        backgroundColor: '#d1fae5',
-                        borderRadius: 4,
-                        color: '#065f46'
-                      }}>
-                        ПАПКИ
-                      </span>
-                    )}
-                    {Number.isFinite(Number(c.retentionDays)) && Number(c.retentionDays) > 0 && (
-                      <span style={{
-                        marginLeft: 6,
-                        padding: '2px 6px',
-                        fontSize: 12,
-                        backgroundColor: '#eef2ff',
-                        borderRadius: 4,
-                        color: '#3730a3'
-                      }}>
-                        {Number(c.retentionDays)} дн.
-                      </span>
-                    )}
-                  </>
-                )}
-              </strong>
-              <br/>
-              ID: {c.id}<br/>
-              Сотрудники: {c.Users.map((u) => u.name).join(', ')}<br/>
-              <button onClick={() => onEdit(c)} style={{ marginRight: 8 }}>
-                Редактировать
-              </button>
-              <button onClick={() => handleDelete(c.id)}>
-                Удалить
-              </button>
-            </li>
-          ))}
-        </ul>
+        <ChatDirectory
+          key={chatType}
+          chats={chats}
+          chatType={chatType}
+          onEdit={onEdit}
+          onDelete={handleDelete}
+        />
       )}
     </div>
   </div>
 );
-
-
-
-  // return (
-  //   <div style={{ maxWidth: 800, margin: '0 auto', padding: 20 }}>
-  //     <h1>Создание чат-групп</h1>
-
-  //     {/* ► Room form */}
-  //     <div style={{ border: '1px solid #ccc', padding: 16, marginBottom: 24 }}>
-  //       <h2>{roomId ? 'Редактировать чат' : 'Новый чат'}</h2>
-  //       <input
-  //         placeholder="Имя чат-группы"
-  //         value={roomName}
-  //         onChange={e => setRoomName(e.target.value)}
-  //         style={{ width: '-webkit-fill-available', padding: 8, marginBottom: 12 }}
-  //       />
-
-  //       <select
-  //         value={selectedRoleId || ''}
-  //         onChange={e => setSelectedRoleId(e.target.value || null)}
-  //         style={{ width: '100%', padding: 8, marginBottom: 12 }}
-  //       >
-  //         <option value="">— выбрать по роли —</option>
-  //         {roles.map(r=>(
-  //           <option key={r.id} value={r.id}>{r.name}</option>
-  //         ))}
-  //       </select>
-
-  //       <div style={{ maxHeight: 200, overflowY: 'auto', marginBottom: 12 }}>
-  //         {users.map(u=>(
-  //           <label key={u.id} style={{ display:'block' }}>
-  //             <input
-  //               type="checkbox"
-  //               checked={selectedUsers.has(u.id)}
-  //               onChange={()=>toggleUser(u.id)}
-  //             />
-  //             {' '}{u.name} (role {u.roleId})
-  //           </label>
-  //         ))}
-  //       </div>
-  //       <div>
-  //         ** Выбрать можно из разных ролей, а потом нажать создать. **
-  //       </div>
-
-  //       <button onClick={handleSubmit} style={{ padding: '8px 16px' }}>
-  //         {roomId ? 'Обновить' : 'Создать'}
-  //       </button>
-  //       {roomId && (
-  //         <button
-  //           onClick={resetForm}
-  //           style={{ marginLeft: 12, padding: '8px 16px' }}
-  //         >Cancel</button>
-  //       )}
-  //     </div>
-
-  //     {/* ► Rooms list */}
-  //     <div>
-  //       <h2>Созданные чат-группы</h2>
-  //       {rooms.length === 0 ? (
-  //         <p>Еще не создано</p>
-  //       ) : (
-  //         <ul style={{ listStyle: 'none', padding: 0 }}>
-  //           {rooms.map(room => (
-  //             <li key={room.id} style={{ marginBottom: 12, borderBottom: '1px solid #eee', paddingBottom: 8 }}>
-  //               <strong>{room.name}</strong> (ID: {room.id})<br/>
-  //               Users: {room.Users.map(u=>u.name).join(', ')}<br/>
-  //               <button onClick={()=>onEdit(room)} style={{ marginRight: 8 }}>Редактировать</button>
-  //               <button onClick={() => handleDelete(room.id)}>
-  //                 Удалить
-  //               </button>
-  //             </li>
-  //           ))}
-  //         </ul>
-  //       )}
-  //     </div>
-  //   </div>
-  // );
 }
-
