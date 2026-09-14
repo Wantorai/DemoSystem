@@ -1,4 +1,5 @@
 const db = require('../models');
+const targetedDiagnostics = require('../services/targetedApiDiagnostics');
 
 const UserSetting = db.sequelize.models.UserSetting;
 
@@ -278,10 +279,11 @@ async function getMyAutoReply(req, res) {
     const userId = Number(req.user?.id || 0);
     if (!userId) return res.status(401).json({ message: 'Unauthorized' });
 
-    const row = await UserSetting.findOne({
+    const row = await targetedDiagnostics.phase('auto-reply-select', () => UserSetting.findOne({
+      ...targetedDiagnostics.queryOptions(),
       where: { userId, key: AUTO_REPLY_KEY },
       attributes: ['value'],
-    });
+    }));
 
     const value = normalizeAutoReply(row?.value || {});
     return res.json(value);

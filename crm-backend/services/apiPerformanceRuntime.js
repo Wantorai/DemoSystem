@@ -1,4 +1,5 @@
 'use strict';
+const targetedDiagnostics = require('./targetedApiDiagnostics');
 
 const DEFAULT_SLOW_THRESHOLD_MS = 1200;
 const MAX_RECENT = 120;
@@ -135,10 +136,11 @@ const apiPerformanceMiddleware = (req, res, next) => {
       });
     }
   });
-  return next();
+  return targetedDiagnostics.run(req, res, next);
 };
 
 const getApiPerformanceSnapshot = () => ({
+  targeted: targetedDiagnostics.snapshot(),
   slowThresholdMs,
   endpoints: Array.from(endpointStats.values())
     .map((row) => ({

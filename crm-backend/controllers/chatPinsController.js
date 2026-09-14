@@ -1,4 +1,5 @@
 const db = require('../models');
+const targetedDiagnostics = require('../services/targetedApiDiagnostics');
 
 const UserChatPin = db.sequelize.models.UserChatPin;
 
@@ -30,15 +31,16 @@ function normalizePinKeys(rawKeys) {
 
 async function getChatPins(req, res) {
   try {
-    await ensureChatPinsTable();
+    await targetedDiagnostics.phase('ensure-pins-table', () => ensureChatPinsTable());
     const userId = Number(req.user?.id || 0);
     if (!userId) return res.status(401).json({ message: 'Unauthorized' });
 
-    const rows = await UserChatPin.findAll({
+    const rows = await targetedDiagnostics.phase('pins-select', () => UserChatPin.findAll({
+      ...targetedDiagnostics.queryOptions(),
       where: { userId },
       attributes: ['pinKey'],
       order: [['orderIndex', 'ASC'], ['createdAt', 'ASC']],
-    });
+    }));
 
     const keys = rows.map((r) => String(r.pinKey || '').trim()).filter(Boolean);
     return res.json({ keys });

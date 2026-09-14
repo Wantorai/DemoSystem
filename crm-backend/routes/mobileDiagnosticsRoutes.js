@@ -18,6 +18,7 @@ const {
   getMobileUpdateSnapshot,
 } = require('../services/mobileDiagnosticsRuntime');
 const { getApiPerformanceSnapshot } = require('../services/apiPerformanceRuntime');
+const targetedDiagnostics = require('../services/targetedApiDiagnostics');
 
 const { diagnosticContext, exportMeasurements } = require('../services/diagnosticsMeasurementsExport');
 
@@ -1515,6 +1516,7 @@ router.get('/mobile-diagnostics/export', auth, requireInternalAdmin, async (req,
     const payload = {
       generatedAt: new Date().toISOString(),
       exportSchemaVersion: 10,
+      serverPauses: targetedDiagnostics.snapshot(from.getTime(), to.getTime()),
       ...exportMeasurements(events),
       range: {
         from: from.toISOString(),

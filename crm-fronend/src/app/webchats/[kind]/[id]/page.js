@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { SocketProvider, useWebSocket } from '@/components/webchats/SocketProvider';
 import { AuthContext } from '../../../../context/AuthContext';
 import ChatList from '@/components/webchats/ChatList';
+import RoomVoiceCounter from '@/components/webchats/RoomVoiceCounter';
 import RoomParticipantsModal from '@/components/webchats/RoomParticipantsModal';
 import ChatFooter from '@/components/webchats/ChatFooter';
 import ChatAvatar from '@/components/webchats/ChatAvatar';
@@ -4147,7 +4148,11 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
               className={pinnedPanelOpen && !isBossFolderRoot ? 'flex h-full min-w-0 gap-4 p-3' : 'h-full min-w-0 p-3'}
             >
               {/* LEFT: messages column */}
-              <div className="flex min-w-0 flex-1 flex-col h-full">
+              <div className="relative flex min-w-0 flex-1 flex-col h-full">
+                {kind === 'room' && token && user?.id && (
+                  <RoomVoiceCounter key={`${user.id}:${id}`} apiBase={API_BASE} roomId={id} userId={user.id} token={token} socket={socket}
+                    onJump={(messageId) => handleMessageClick({ id: messageId, roomId: id })} />
+                )}
                 {!isBossFolderRoot && kind === 'boss' && bossFolderMode && activeBossFolder && (
                   <div className="mb-2 shrink-0 overflow-hidden border border-gray-200 bg-white shadow-sm">
                     <button
@@ -5566,6 +5571,11 @@ const MessageItem = React.memo(function MessageItem({ message, messagesById = {}
                     }}
                     onPlay={(event) => {
                       if (typeof onAudioPlay === 'function') onAudioPlay(message?.id, event.currentTarget);
+                    }}
+                    onPlaying={() => {
+                      if (kind === 'room' && Number(senderId) !== Number(currentUserId)) {
+                        window.dispatchEvent(new CustomEvent('room-voice-playing', { detail: { roomId, messageId: message.id } }));
+                      }
                     }}
                     onEnded={() => {
                       if (typeof onAudioEnded === 'function') onAudioEnded(message?.id);

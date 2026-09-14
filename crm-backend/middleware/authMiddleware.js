@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const db = require('../models');
+const targetedDiagnostics = require('../services/targetedApiDiagnostics');
 const User = db.sequelize.models.User;
 require('dotenv').config();
 
@@ -83,7 +84,7 @@ const authMiddleware = async (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, secretKey);
-    const user = await User.findByPk(decoded.id);
+    const user = await targetedDiagnostics.phase('auth-user', () => User.findByPk(decoded.id, targetedDiagnostics.queryOptions()));
 
     if (!user) {
       return res.status(401).json({ error: 'Пользователь не найден' });

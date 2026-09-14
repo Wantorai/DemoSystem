@@ -3,6 +3,10 @@ const express = require('express');
 const router = express.Router();
 const { getMessages, createMessage, forwardMessages, getMessagesForWeb, updateRoomMessage, toggleRoomMessageReaction, searchWebMessages } = require('../controllers/roomMessageController');
 const authMiddleware = require('../middleware/authMiddleware');
+const { getUnplayedVoices, markVoicePlayed } = require('../controllers/roomVoicePlaysController');
+
+router.get('/rooms/:roomId/voices/unplayed', authMiddleware, getUnplayedVoices);
+router.put('/rooms/:roomId/voices/:messageId/played', authMiddleware, markVoicePlayed);
 
 // GET /admin/rooms/:roomId/messages
 router.get('/admin/rooms/:roomId/messages', authMiddleware, getMessages);
