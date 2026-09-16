@@ -1,3 +1,4 @@
+const { mapWithConcurrency } = require('../services/mapWithConcurrency');
 // controllers/roomController.js
 
 const db = require("../models");
@@ -900,7 +901,7 @@ const listRoomsForWeb = async (req, res) => {
     });
 
     // Формируем объекты для фронта
-    const out = await Promise.all(rooms.map(async (room) => {
+    const out = await mapWithConcurrency(rooms, 2, async (room) => {
       const roomId = room.id;
       const maxMessageId = Number(
         await RoomMessage.max('id', { where: { roomId } })
@@ -1033,7 +1034,7 @@ const listRoomsForWeb = async (req, res) => {
         creatorUserId: room.creatorUserId || null,
         Users: roomUsers.map(serializeUserWithAvatar)
       };
-    }));
+    });
 
     // Фильтруем null (скрытые чаты)
     const filteredOut = out.filter(item => item !== null);

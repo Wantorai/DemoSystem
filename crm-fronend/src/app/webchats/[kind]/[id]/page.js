@@ -8,6 +8,7 @@ import ChatList from '@/components/webchats/ChatList';
 import RoomVoiceCounter from '@/components/webchats/RoomVoiceCounter';
 import RoomParticipantsModal from '@/components/webchats/RoomParticipantsModal';
 import ChatFooter from '@/components/webchats/ChatFooter';
+import MessageDeliveryNotice from '@/components/webchats/MessageDeliveryNotice';
 import ChatAvatar from '@/components/webchats/ChatAvatar';
 import {
   IoDocumentTextOutline, IoDocumentAttachSharp, IoArrowDownCircleOutline, IoImageOutline, IoAttachOutline, IoVideocamOutline,
@@ -572,6 +573,11 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
 
   const pendingTemp = useRef(new Map());
   const pendingUploadTempIdsRef = useRef(new Set());
+  const failedUploadUrlsRef = useRef(new Set());
+  useEffect(() => () => {
+    failedUploadUrlsRef.current.forEach(url => URL.revokeObjectURL(url));
+    failedUploadUrlsRef.current.clear();
+  }, [kind, id]);
 
   const [userMap, setUserMap] = useState({});
   const [roomDeliveredMessageIds, setRoomDeliveredMessageIds] = useState([]);
@@ -1987,6 +1993,9 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
 
         // console.log('[handleIncoming] raw', { id: msg.id, tempId: msg.tempId, userId: msg.userId ?? msg.User?.id, createdAt: msg.createdAt, snippet: String(msg.content ?? '').slice(0,80) });
 
+        if (msg.clientId && msg.id) {
+          setMessages(prev => prev.filter(m => !(m.localText && m.clientId === msg.clientId)));
+        }
         // 1) дедуп по id (если уже обработали/пометили)
         if (msg.id && seenRef.current.has(String(msg.id))) {
           // console.log('[handleIncoming] skip — seenRef has id', msg.id);
@@ -2322,6 +2331,7 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
     const readRaw = String(message?.readStatus ?? '').toLowerCase();
     const isSending = !!message?.sending || isTemp || deliveryRaw === 'pending' || deliveryRaw === 'sending' || !Number.isFinite(messageId) || messageId <= 0;
 
+    if (deliveryRaw === 'failed') return 'failed';
     if (isSending) return 'sending';
     if (readRaw === 'read') return 'read';
     if (readRaw === 'delivered') return 'delivered';
@@ -2509,8 +2519,8 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
       return newMsg;
     } catch (err) {
       console.error('uploadFile error', err);
-      setMessages(prev => prev.filter(message => message?.id !== optimisticId));
-      if (optimisticMediaUrl) URL.revokeObjectURL(optimisticMediaUrl);
+      setMessages(prev => prev.map(message => message?.id === optimisticId ? { ...message, sending: false, deliveryStatus: navigator.onLine === false ? 'pending' : 'failed' } : message));
+      if (optimisticMediaUrl) failedUploadUrlsRef.current.add(optimisticMediaUrl);
       throw err;
     } finally {
       pendingUploadTempIdsRef.current.delete(optimisticId);
@@ -2725,6 +2735,7 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
       return;
     }
     setSending(true);
+    let localTextId = null;
 
     try {
       // --- РЕЖИМ РЕДАКТИРОВАНИЯ ---
@@ -2795,6 +2806,14 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
         ...(replyDraft?.messageId ? { replyToMessageId: replyDraft.messageId } : {})
       };
 
+      if (kind === 'room') {
+        const previous = messages.find(m => m.localText && !m.sending && ['failed','pending'].includes(m.deliveryStatus) && m.content === trimmed && String(m.replyToMessageId ?? '') === String(replyDraft?.messageId ?? ''));
+        localTextId = previous?.id || ('temp-text-' + Date.now() + '-' + Math.random().toString(36).slice(2));
+        body.clientId = previous?.clientId || localTextId;
+        const optimistic = { ...body, id: localTextId, clientId: body.clientId, localText: true, sending: true, deliveryStatus: 'sending', createdAt: previous?.createdAt || new Date().toISOString(), User: { id: user?.id, name: user?.name } };
+        setMessages(prev => [...prev.filter(m => m.id !== localTextId), optimistic]);
+      }
+
       const opts = {
         method: 'POST',
         headers,
@@ -2814,17 +2833,16 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
       let saved;
       try {
         saved = await res.json();
-        setText((current) => current === text ? '' : current);
-        setReplyDraft(null);
       } catch (e) {
         console.error('[sendMessage] failed parsing json', e);
         throw e;
       }
 
-      if (!saved) {
-        console.warn('[sendMessage] server returned empty body');
-        return;
-      }
+      if (!saved?.id && localTextId) throw new Error('Сервер не подтвердил отправку');
+      if (!saved) return;
+      setText((current) => current === text ? '' : current);
+      setReplyDraft(null);
+      if (localTextId) setMessages(prev => prev.filter(m => m.id !== localTextId));
 
       if (saved?.id) {
         const sid = String(saved.id);
@@ -2843,6 +2861,7 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
         setMessages(prev => [...prev, fallback]);
       }
     } catch (err) {
+      if (localTextId) setMessages(prev => prev.map(m => m.id === localTextId ? { ...m, sending: false, deliveryStatus: navigator.onLine === false ? 'pending' : 'failed' } : m));
       console.error('[sendMessage] error', err);
       toast.info('Ошибка отправки: ' + String(err));
     } finally {
@@ -3306,6 +3325,15 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
     // console.log('id чата = ', id)
 
     if (!message?.id) return;
+    if (String(message.id).startsWith('temp-')) {
+      if (message.sending || !confirm('Удалить локальное неотправленное сообщение?')) return;
+      setMessages(prev => prev.filter(m => m.id !== message.id));
+      if (failedUploadUrlsRef.current.has(message.mediaUrl)) {
+        URL.revokeObjectURL(message.mediaUrl);
+        failedUploadUrlsRef.current.delete(message.mediaUrl);
+      }
+      return;
+    }
     const ok = confirm('Удалить сообщение? Оно будет помечено как удалённое.');
     if (!ok) return;
 
@@ -4572,7 +4600,7 @@ const MessageItem = React.memo(function MessageItem({ message, messagesById = {}
   const isMine = !isExternalAuthor && String(senderId) === String(currentUserId);
   // временное сообщение (temp) или пометка отправки
   const isTemp = typeof message.id === 'string' && message.id.startsWith('temp-');
-  const isSending = !!message.sending || isTemp;
+  const isSending = !!message.sending || (isTemp && !['failed','pending'].includes(message.deliveryStatus));
 
   // media src
   const src = getImageSrc(message.mediaUrl);
@@ -5025,7 +5053,7 @@ const MessageItem = React.memo(function MessageItem({ message, messagesById = {}
     forward: !hasText && !(message.mediaUrl || message.fileName),
     share: !navigator.share && !(window && window.location),
     save: !(message.mediaUrl || message.fileName),
-    edit: !isMineMessage
+    edit: !isMineMessage || isTemp
   };
 
 
@@ -5694,6 +5722,10 @@ const MessageItem = React.memo(function MessageItem({ message, messagesById = {}
                 </span>
               )}
             </div>
+          )}
+
+          {isMine && !message.is_deleted && ['failed','pending','sending'].includes(message.deliveryStatus) && (
+            <MessageDeliveryNotice message={message} />
           )}
 
           {message.type !== 'text' && message.type !== 'audio' && !isFileAttachment && (
