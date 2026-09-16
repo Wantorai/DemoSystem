@@ -837,6 +837,7 @@ const handleFileUpload = async (req, res) => {
               messageId: String(newMsg.id),
               mediaUrl: newMsg.mediaUrl || null,
               fileName: decodedFileName || null,
+              avatarUrl: toAbsoluteMediaUrl(newMsg.User?.avatar, getOwnDomain(req)),
             };
 
             await sendPushNotification(recipientUserIds, title, body, data);
@@ -1165,6 +1166,10 @@ const handleFileUpload = async (req, res) => {
           messageId: payload._id,
           mediaUrl: payload.mediaUrl,
           fileName: decodedFileName,
+          avatarUrl: toAbsoluteMediaUrl(
+            participants.find(p => Number(p.user?.id) === senderIdNum)?.user?.avatar,
+            getOwnDomain(req)
+          ),
         };
 
         //console.log('Push: отправляю', tokens.length, 'токенов, recipients:', recipientUserIds.length);
