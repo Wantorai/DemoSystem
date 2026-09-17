@@ -8,6 +8,9 @@ function diagnosticContext(event) {
     runtimeVersion: text(event.runtimeVersion), diagnosticsSchemaVersion: number(state.diagnosticsSchemaVersion),
     otaUpdateId: text(state.otaUpdateId), otaIsEmbeddedLaunch: typeof state.otaIsEmbeddedLaunch === 'boolean' ? state.otaIsEmbeddedLaunch : null,
     otaCreatedAt: text(state.otaCreatedAt),
+    installedBuildTag: text(state.installedBuildTag), buildTagSource: text(state.buildTagSource),
+    nativeAppVersion: text(state.nativeAppVersion), nativeBuildVersion: text(state.nativeBuildVersion),
+    versionTelemetryVersion: number(state.versionTelemetryVersion),
   };
 }
 function exportMeasurements(events) {

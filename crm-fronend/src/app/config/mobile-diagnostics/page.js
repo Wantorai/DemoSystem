@@ -28,6 +28,7 @@ import {
 } from 'recharts';
 import Spinner from '../../../components/Spinner';
 import { AuthContext } from '../../../context/AuthContext';
+import DeviceVersionsTable from './DeviceVersionsTable';
 
 const formatDate = (value) => {
   if (!value) return '-';
@@ -495,6 +496,8 @@ export default function MobileDiagnosticsPage() {
             tip="Warning и critical события от мобильных приложений за последний час."
           />
         </section>
+
+        <DeviceVersionsTable inventory={data?.deviceVersions} />
 
         <section className="rounded border border-slate-200 bg-white p-4">
           <div className="mb-3 flex items-center justify-between gap-3">

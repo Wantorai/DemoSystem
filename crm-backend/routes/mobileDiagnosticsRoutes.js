@@ -4,7 +4,7 @@ const express = require('express');
 const fs = require('fs/promises');
 const path = require('path');
 const axios = require('axios');
-const { Op } = require('sequelize');
+const { Op, QueryTypes } = require('sequelize');
 const auth = require('../middleware/authMiddleware');
 const {
   AppVersion,
@@ -21,6 +21,8 @@ const { getApiPerformanceSnapshot } = require('../services/apiPerformanceRuntime
 const targetedDiagnostics = require('../services/targetedApiDiagnostics');
 
 const { diagnosticContext, exportMeasurements } = require('../services/diagnosticsMeasurementsExport');
+const { buildDeviceVersions } = require('../services/diagnosticsDeviceVersions');
+const { mobileUpdateId } = require('../services/mobileUpdateIdentity');
 
 const router = express.Router();
 const routeStartedAt = new Date().toISOString();
@@ -1234,11 +1236,13 @@ const readUpdateClients = async () => {
       const runtimeVersion = runtimeDir.name;
       const runtimeRoot = path.join(appRoot, runtimeVersion);
       const current = await safeReadJson(path.join(runtimeRoot, 'current.json'), {});
-      const releaseId = current?.releaseId || null;
+      const releaseId = /^[a-zA-Z0-9._-]+$/.test(current?.releaseId || '') && !['.', '..'].includes(current.releaseId) ? current.releaseId : null;
       const releaseRoot = releaseId ? path.join(runtimeRoot, releaseId) : null;
       const releaseInfo = releaseRoot ? await safeReadJson(path.join(releaseRoot, 'release.json'), {}) : {};
-      const metadata = releaseRoot ? await safeReadJson(path.join(releaseRoot, 'metadata.json'), {}) : {};
-      const releaseStat = releaseRoot ? await statOrNull(releaseRoot) : null;
+      const metadataBuffer = releaseRoot ? await fs.readFile(path.join(releaseRoot, 'metadata.json')).catch(() => null) : null;
+      let metadata = {};
+      try { metadata = metadataBuffer ? JSON.parse(metadataBuffer.toString('utf8')) : {}; } catch {}
+      const releaseStat = releaseRoot ? await statOrNull(path.join(releaseRoot, 'metadata.json')) : null;
       const platforms = Object.keys(metadata?.fileMetadata || {});
 
       runtimes.push({
@@ -1247,6 +1251,7 @@ const readUpdateClients = async () => {
         message: releaseInfo?.message || '',
         createdAt: releaseInfo?.createdAt || (releaseStat ? releaseStat.mtime.toISOString() : null),
         platforms,
+        updateIds: Object.fromEntries(platforms.filter(platform => metadata.fileMetadata[platform]?.bundle).map(platform => [platform, mobileUpdateId(metadataBuffer, releaseId, platform)])),
       });
     }
 
@@ -1257,6 +1262,43 @@ const readUpdateClients = async () => {
   }
 
   return { root: updatesRoot, available: true, clients: clients.sort((a, b) => a.appKey.localeCompare(b.appKey)) };
+};
+
+const publishedReleases = updateClients => updateClients.clients.flatMap(client => client.runtimes.flatMap(runtime =>
+  Object.entries(runtime.updateIds || {}).map(([platform, updateId]) => ({
+    appKey: client.appKey, runtimeVersion: runtime.runtimeVersion, platform, updateId,
+    createdAt: runtime.createdAt, source: 'published',
+  }))));
+
+let deviceVersionCache = null;
+let deviceVersionLoad = null;
+const loadDeviceVersionEvents = async () => {
+  if (deviceVersionCache && Date.now() - deviceVersionCache.loadedAt < 60000) return deviceVersionCache;
+  if (deviceVersionLoad) return deviceVersionLoad;
+  deviceVersionLoad = (async () => {
+    const to = new Date(), from = new Date(to.getTime() - 30 * 86400000);
+    // Fetch one complete latest event per installation, independent of the telemetry event cap.
+    const events = await MobileDiagnosticEvent.sequelize.query(`
+      SELECT DISTINCT ON ("appKey", "deviceId")
+        "appKey", "deviceId", "userId", "platform", "runtimeVersion", "appVersion", "buildNumber",
+        "deviceModel", "osVersion", "occurredAt", "createdAt",
+        jsonb_build_object(
+          'nativeAppVersion', state->'nativeAppVersion', 'nativeBuildVersion', state->'nativeBuildVersion',
+          'versionCheck', state->'versionCheck',
+          'installedBuildTag', state->'installedBuildTag', 'buildTagSource', state->'buildTagSource',
+          'versionTelemetryVersion', state->'versionTelemetryVersion',
+          'otaUpdateId', state->'otaUpdateId', 'otaCreatedAt', state->'otaCreatedAt',
+          'otaIsEmbeddedLaunch', state->'otaIsEmbeddedLaunch', 'diagnosticsSchemaVersion', state->'diagnosticsSchemaVersion'
+        ) AS state
+      FROM mobile_diagnostic_events
+      WHERE "occurredAt" >= :from AND "occurredAt" <= :to AND "appKey" <> 'orderspace-test'
+      ORDER BY "appKey", "deviceId", "occurredAt" DESC, id DESC
+      LIMIT 10001
+    `, { replacements: { from, to }, type: QueryTypes.SELECT });
+    deviceVersionCache = { events: events.slice(0, 10000), from: from.toISOString(), to: to.toISOString(), truncated: events.length > 10000, loadedAt: Date.now() };
+    return deviceVersionCache;
+  })();
+  try { return await deviceVersionLoad; } finally { deviceVersionLoad = null; }
 };
 
 router.post('/mobile-diagnostics/metrics', auth, async (req, res) => {
@@ -1331,6 +1373,7 @@ router.get('/mobile-diagnostics/summary', auth, requireInternalAdmin, async (_re
       recentlySeenUsers,
       staleUsersWithTokens,
       telemetryEvents,
+      versionEvents,
     ] = await Promise.all([
       readUpdateClients(),
       AppVersion.findAll({ order: [['id', 'DESC'], ['createdAt', 'DESC']], limit: 20 }),
@@ -1359,6 +1402,7 @@ router.get('/mobile-diagnostics/summary', auth, requireInternalAdmin, async (_re
         order: [['occurredAt', 'DESC']],
         limit: 3000,
       }),
+      loadDeviceVersionEvents(),
     ]);
 
     const sockets = getSocketSnapshot();
@@ -1385,6 +1429,7 @@ router.get('/mobile-diagnostics/summary', auth, requireInternalAdmin, async (_re
       ota,
       apiPerformance,
       telemetry,
+      deviceVersions: buildDeviceVersions(versionEvents.events, publishedReleases(updateClients), { canonicalAppKey, from: versionEvents.from, to: versionEvents.to, truncated: versionEvents.truncated }),
       ingest: {
         ...ingestStats,
         tableReady: mobileDiagnosticTableReady,
@@ -1513,9 +1558,11 @@ router.get('/mobile-diagnostics/export', auth, requireInternalAdmin, async (req,
       ? loadedEvents.filter((event) => hasDiagnosticsVersionAtLeast(event.toJSON ? event.toJSON() : event, minDiagVersion))
       : loadedEvents;
     const apiExport = buildPeriodApiExport(events);
+    const updateClients = await readUpdateClients();
     const payload = {
       generatedAt: new Date().toISOString(),
       exportSchemaVersion: 10,
+      deviceVersions: buildDeviceVersions(loadedEvents, publishedReleases(updateClients), { canonicalAppKey, from: from.toISOString(), to: to.toISOString(), truncated: loadedEvents.length >= limit }),
       serverPauses: targetedDiagnostics.snapshot(from.getTime(), to.getTime()),
       ...exportMeasurements(events),
       range: {
@@ -1547,6 +1594,7 @@ router.get('/mobile-diagnostics/export', auth, requireInternalAdmin, async (req,
       issues: apiExport.issues,
       socketEvents: apiExport.socketEvents,
       notes: [
+        'deviceVersions использует все загруженные события периода до фильтра minDiagVersion. published OTA - текущий релиз этого сервера; observed - только сравнение с версиями в выборке. Статус билда берется из проверки приложения: localBuildTag против имени папки builds/ из /app-version его backend; checkedAt указывает время проверки. Нативные версии показаны отдельно.',
         'slowApiEndpoints агрегированы за весь выбранный период, а не только за последний час.',
         'minDiagVersion фильтрует события по state.diagnosticsSchemaVersion.',
         'Client latency - время клиента после выхода из очереди; queue wait учитывается отдельно.',

@@ -6,6 +6,7 @@ const fs = require('fs');
 const fsPromises = require('fs/promises');
 const path = require('path');
 const { recordMobileUpdateRequest } = require('../services/mobileDiagnosticsRuntime');
+const { mobileUpdateId } = require('../services/mobileUpdateIdentity');
 
 const router = express.Router();
 const updatesRoot = path.resolve(
@@ -26,9 +27,6 @@ const toBase64Url = (buffer) =>
 
 const sha256 = (buffer) => toBase64Url(crypto.createHash('sha256').update(buffer).digest());
 const md5 = (buffer) => crypto.createHash('md5').update(buffer).digest('hex');
-const hashHex = (buffer) => crypto.createHash('sha256').update(buffer).digest('hex');
-const hashToUuid = (value) =>
-  `${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20, 32)}`;
 
 const contentTypeForExtension = (extension, launchAsset = false) => {
   if (launchAsset) return 'application/javascript';
@@ -152,9 +150,8 @@ const buildManifest = async (req, appKey, runtimeVersion, platform, releaseId, r
     }));
   }
 
-  const idSource = Buffer.from(`${hashHex(metadataBuffer)}:${releaseId}:${platform}`);
   return {
-    id: hashToUuid(hashHex(idSource)),
+    id: mobileUpdateId(metadataBuffer, releaseId, platform),
     createdAt: releaseInfo.createdAt || new Date((await fsPromises.stat(metadataPath)).mtimeMs).toISOString(),
     runtimeVersion,
     launchAsset: await createAssetDescriptor({
