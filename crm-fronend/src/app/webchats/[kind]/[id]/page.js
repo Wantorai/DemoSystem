@@ -4779,6 +4779,11 @@ const MessageItem = React.memo(function MessageItem({ message, messagesById = {}
   }, [menuVisible]);
 
   const onContextMenu = (e) => {
+    const selection = window.getSelection();
+    if (kind === 'room' && (
+      (selection && !selection.isCollapsed && messageRootRef.current?.contains(selection.anchorNode)) ||
+      (e.nativeEvent?.pointerType === 'touch' && e.target?.closest?.('.webchat-selectable-text'))
+    )) return;
     e.preventDefault();
     e.stopPropagation();
     // позиционируем меню у курсора (немного смещаем)
@@ -4797,6 +4802,7 @@ const MessageItem = React.memo(function MessageItem({ message, messagesById = {}
   const onMessagePointerDown = (event) => {
     if (event.pointerType === 'mouse') return;
     cancelMessageLongPress();
+    if (kind === 'room' && event.target?.closest?.('.webchat-selectable-text')) return;
     const startX = event.clientX;
     const startY = event.clientY;
     const timer = window.setTimeout(() => {
@@ -5544,7 +5550,7 @@ const MessageItem = React.memo(function MessageItem({ message, messagesById = {}
           {message.type === 'text' && (
             <div className="text-sm">
               <div className="flex w-full items-end gap-1">
-                <div className="min-w-0 flex-1 whitespace-pre-wrap">
+                <div className="webchat-selectable-text min-w-0 flex-1 whitespace-pre-wrap">
                   {parseSiteCallbackMessage(getReadableMessageText(message, "")) ? (
                     <SiteCallbackCard content={getReadableMessageText(message, "")} />
                   ) : (
@@ -5660,7 +5666,7 @@ const MessageItem = React.memo(function MessageItem({ message, messagesById = {}
                 />
               </a>
               {!!imageDescription && (
-                <div className="mt-2 text-sm whitespace-pre-wrap break-words">
+                <div className="webchat-selectable-text mt-2 text-sm whitespace-pre-wrap break-words">
                   <CollapsibleMessageText text={imageDescription} />
                 </div>
               )}

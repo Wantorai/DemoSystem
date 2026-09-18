@@ -116,6 +116,12 @@ body {
     touch-action: pan-y;
 }
 
+.webchat-message-row[data-chat-kind="room"] .webchat-selectable-text {
+    -webkit-touch-callout: default;
+    -webkit-user-select: text;
+    user-select: text;
+}
+
 .webchat-room-layout .webchat-conversation-surface {
     background-color: #ede8e8 !important;
     color: #111827;
