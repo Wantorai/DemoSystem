@@ -12,6 +12,8 @@ export async function requestNotificationPermission() {
 }
 
 export function showNotification({ title, body, icon, tag, data }) {
+  // A subscribed browser receives the server push; don't duplicate it via sockets.
+  try { if (localStorage.getItem('webchat-push-user')) return; } catch {}
   if (!('Notification' in window)) return;
   if (Notification.permission !== 'granted') return;
 

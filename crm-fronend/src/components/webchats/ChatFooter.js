@@ -17,6 +17,10 @@ const EMOJI_LIST = [
   '💔','✅','❌','⭐','🚀','📌','💬','👀','🤝','👌',
 ];
 
+function hapticPulse(duration = 10) {
+  try { navigator.vibrate?.(duration); } catch {}
+}
+
 function Spinner({ size = 20 }) {
   return (
     <svg
@@ -80,6 +84,8 @@ export default function ChatFooter({
   // const [dragStartY, setDragStartY] = useState(null);
   const dragStartYRef = useRef(null);
   const pointerActiveRef = useRef(false);
+  const recordingPointerIdRef = useRef(null);
+  const [micPressed, setMicPressed] = useState(false);
   const lockedRef = useRef(false);
   const longPressTimerRef = useRef(null);
   const longPressTriggeredRef = useRef(false);
@@ -98,6 +104,37 @@ export default function ChatFooter({
   const LOCK_THRESHOLD = 80; // px to drag up to lock
   const LONG_PRESS_MS = 300;
   const MIN_RECORDING_MS = 250;
+
+  // Safari may take over a drag as page scrolling. Cancel only moves belonging
+  // to a touch that began on our microphone, including after it locks.
+  useEffect(() => {
+    let recordingTouchId = null;
+    const onTouchStart = (event) => {
+      if (event.touches.length !== 1) return;
+      recordingTouchId = event.target.closest?.('.webchat-mic-button')
+        ? event.changedTouches[0]?.identifier ?? null : null;
+    };
+    const onTouchMove = (event) => {
+      if (recordingTouchId !== null &&
+          Array.from(event.changedTouches).some(touch => touch.identifier === recordingTouchId) &&
+          event.cancelable) event.preventDefault();
+    };
+    const onTouchEnd = (event) => {
+      if (Array.from(event.changedTouches).some(touch => touch.identifier === recordingTouchId)) {
+        recordingTouchId = null;
+      }
+    };
+    document.addEventListener('touchstart', onTouchStart, { capture: true, passive: true });
+    document.addEventListener('touchmove', onTouchMove, { capture: true, passive: false });
+    document.addEventListener('touchend', onTouchEnd, { capture: true, passive: true });
+    document.addEventListener('touchcancel', onTouchEnd, { capture: true, passive: true });
+    return () => {
+      document.removeEventListener('touchstart', onTouchStart, true);
+      document.removeEventListener('touchmove', onTouchMove, true);
+      document.removeEventListener('touchend', onTouchEnd, true);
+      document.removeEventListener('touchcancel', onTouchEnd, true);
+    };
+  }, []);
 
 
 
@@ -169,7 +206,9 @@ export default function ChatFooter({
   useEffect(() => {
     // определяем функции здесь — они будут иметь доступ ко всем рефам выше
     handleGlobalPointerMoveRef.current = (e) => {
+      if (e.pointerId !== recordingPointerIdRef.current) return;
       if (!pointerActiveRef.current) return;
+      if (e.cancelable) e.preventDefault();
       if (lockedRef.current) return;
       if (!recordingStartedAtRef.current) return;
 
@@ -177,6 +216,8 @@ export default function ChatFooter({
       if (startY == null) return;
       const dy = startY - e.clientY;
       if (dy >= LOCK_THRESHOLD) {
+        hapticPulse(18);
+        setMicPressed(false);
         setLocked(true);
         lockedRef.current = true;
         pointerActiveRef.current = false;
@@ -190,7 +231,10 @@ export default function ChatFooter({
       }
     };
 
-    handleGlobalPointerUpRef.current = async () => {
+    handleGlobalPointerUpRef.current = async (event) => {
+      if (event.pointerId !== recordingPointerIdRef.current) return;
+      recordingPointerIdRef.current = null;
+      setMicPressed(false);
       if (!pointerActiveRef.current) return;
       pointerActiveRef.current = false;
       dragStartYRef.current = null;
@@ -214,6 +258,11 @@ export default function ChatFooter({
       // авто-отправка через ref'ы (всегда актуальные)
       try {
         const blob = await stopRecordingAndGetBlobRef.current?.();
+        if (event.type === 'pointercancel') {
+          // Interruption is not a deliberate send gesture.
+          if (blob && recordedMs >= MIN_RECORDING_MS) setPreviewBlob(blob);
+          return;
+        }
         if (blob && recordedMs >= MIN_RECORDING_MS && onSendVoiceRef.current) {
           onSendVoiceRef.current(blob, lastRecordingDurationRef.current);
         }
@@ -236,9 +285,13 @@ export default function ChatFooter({
 
   // ---------- pointer down: навешиваем текущие функции (они уже инициализированы выше в useEffect) ----------
   const onMicPointerDown = (e) => {
+    if (e.isPrimary === false) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     if (pointerActiveRef.current || recordingStartPendingRef.current || mediaRecorderRef.current) return;
     e.preventDefault();
+    recordingPointerIdRef.current = e.pointerId;
+    setMicPressed(true);
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
 
     pointerActiveRef.current = true;
     dragStartYRef.current = e.clientY;
@@ -259,6 +312,7 @@ export default function ChatFooter({
       recordingStartPendingRef.current = true;
       const started = await startRecordingInternal();
       recordingStartPendingRef.current = false;
+      if (started && pointerActiveRef.current) hapticPulse();
 
       // Палец мог быть отпущен, пока браузер открывал/проверял микрофон.
       if (started && !pointerActiveRef.current && !lockedRef.current) {
@@ -266,6 +320,8 @@ export default function ChatFooter({
         await stopRecordingAndGetBlobRef.current?.();
       }
       if (!started) {
+        setMicPressed(false);
+        recordingPointerIdRef.current = null;
         pointerActiveRef.current = false;
         dragStartYRef.current = null;
         longPressTriggeredRef.current = false;
@@ -467,15 +523,17 @@ export default function ChatFooter({
 
 
 
+  const [originalPhotos, setOriginalPhotos] = useState(false);
   // file input
   const onAttachClick = () => {
+    hapticPulse();
     if (fileRef.current) fileRef.current.click();
   };
 
   const handleFileChange = (e) => {
     const f = e.target.files && e.target.files[0];
     if (f) {
-      if (onFile) onFile(f);
+      if (onFile) onFile(f, { original: originalPhotos });
       e.target.value = '';
     }
   };
@@ -571,7 +629,7 @@ export default function ChatFooter({
 
 
   return (
-    <div className={`webchat-footer ${showSend ? 'webchat-footer-has-text' : ''} w-full border-t border-gray-200 bg-white flex-shrink-0 p-3 relative`}>
+    <div className={`webchat-footer ${showSend ? 'webchat-footer-has-text' : ''} ${isRecording || locked || previewBlob ? 'webchat-footer-recording' : ''} ${locked || previewBlob ? 'webchat-footer-recording-expanded' : ''} w-full border-t border-gray-200 bg-white flex-shrink-0 p-3 relative`}>
 
 
       {/* ----------------- Banner редактирования (показываем только при editingMessage) ----------------- */}
@@ -621,7 +679,7 @@ export default function ChatFooter({
 
       <div className="webchat-footer-row flex items-end gap-3">
         {/* Attach */}
-        {!locked && (
+        {!locked && !isRecording && !previewBlob && (
           <button
             type="button"
             onClick={onAttachClick}
@@ -646,6 +704,10 @@ export default function ChatFooter({
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey && (isRecording || locked || previewBlob)) {
+                e.preventDefault();
+                return;
+              }
               if (e.key === 'Escape' && editingMessage) { e.preventDefault(); cancelEdit(); }
               else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); const t = (text||'').trim(); if (t) sendMessage(); }
             }}
@@ -656,7 +718,18 @@ export default function ChatFooter({
         </div>
 
         {/* Right controls: if previewBlob -> show delete + send; if locked -> cancel + pause; otherwise mic/send */}
-        <div className="webchat-compose-actions flex items-center gap-2 relative">
+        <div
+          className="webchat-compose-actions flex items-center gap-2 relative"
+          onPointerDownCapture={(event) => {
+            // Keep an already focused composer active while operating the recorder.
+            // Prevent button focus; click and the microphone's pointer handlers still run.
+            if (document.activeElement === textareaRef.current &&
+                event.target.closest('button') &&
+                (isRecording || locked || previewBlob || event.target.closest('.webchat-mic-button'))) {
+              event.preventDefault();
+            }
+          }}
+        >
 
           {!previewBlob && !locked && !isRecording && (
             <div className="webchat-emoji-control relative">
@@ -782,7 +855,7 @@ export default function ChatFooter({
               </div>
 
             </>
-          ) : showSend ? (
+          ) : showSend && !isRecording ? (
             // normal: text present -> send button
             <button
               onClick={sendMessage}
@@ -844,7 +917,7 @@ export default function ChatFooter({
                 onContextMenu={(event) => event.preventDefault()}
                 aria-label={isRecording ? "Запись" : "Нажмите и держите для записи"}
                 title="Нажмите и держите для записи"
-                className="webchat-mic-button p-1 border-none transition"
+                className={`webchat-mic-button ${micPressed ? 'webchat-mic-pressed' : ''} p-1 border-none transition`}
                 style={{ touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }}
               >
                 <div className="relative flex items-center justify-center">
@@ -875,6 +948,10 @@ export default function ChatFooter({
         </div>
       </div>
 
+      <label className="webchat-original-photo-option flex items-center gap-2 text-xs text-gray-500 mt-1">
+        <input type="checkbox" checked={originalPhotos} onChange={event => setOriginalPhotos(event.target.checked)} />
+        Фото без сжатия (оригинал)
+      </label>
     </div>
   );
 }

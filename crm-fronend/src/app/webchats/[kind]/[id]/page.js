@@ -1,6 +1,7 @@
 // crm-fronend\src\app\webchats\[kind]\[id]\page.js
 'use client';
 import React, { useEffect, useLayoutEffect, useRef, useState, useContext, useCallback, useMemo } from 'react';
+import { flushSync } from 'react-dom';
 import { useParams, useRouter } from 'next/navigation';
 import { SocketProvider, useWebSocket } from '@/components/webchats/SocketProvider';
 import { AuthContext } from '../../../../context/AuthContext';
@@ -8,6 +9,7 @@ import ChatList from '@/components/webchats/ChatList';
 import RoomVoiceCounter from '@/components/webchats/RoomVoiceCounter';
 import RoomParticipantsModal from '@/components/webchats/RoomParticipantsModal';
 import ChatFooter from '@/components/webchats/ChatFooter';
+import { prepareChatPhoto, uploadChatMedia } from '@/components/webchats/uploadMedia';
 import MessageDeliveryNotice from '@/components/webchats/MessageDeliveryNotice';
 import ChatAvatar from '@/components/webchats/ChatAvatar';
 import {
@@ -29,6 +31,9 @@ import { showNotification } from '@/components/webchats/notifications';
 import CrossChatEntry from '@/components/webchats/CrossChatEntry';
 import AllPinsView from '@/components/webchats/AllPinsView';
 import WebchatFontScaleControl from '@/components/webchats/WebchatFontScaleControl';
+import WebPushControl from '@/components/webchats/WebPushControl';
+import HistoryDiagnostics, { createHistoryDiagnostics } from '@/components/webchats/HistoryDiagnostics';
+import { captureHistoryAnchor, restoreHistoryAnchor, observeHistoryAnchor, waitForHistoryIdle } from '@/components/webchats/historyScroll';
 import { formatChatDateTime, formatChatTime, formatChatTimeOrDate } from '@/components/webchats/dateFormat';
 import { FaTelegramPlane } from 'react-icons/fa';
 // import ChatLayout from '@/components/webchats/ChatLayout';
@@ -360,6 +365,8 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
   const olderHistoryIntentAtRef = useRef(0);
   const [hasMore, setHasMore] = useState(true);
   const [showScrollDown, setShowScrollDown] = useState(false);
+  const scrollButtonLastTopRef = useRef(null);
+  const scrollButtonProgrammaticRef = useRef(false);
   const BOTTOM_THRESHOLD = 60;
   const [searchQuery, setSearchQuery] = useState('');
   const [searchModalOpen, setSearchModalOpen] = useState(false);
@@ -436,6 +443,7 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
     const updateVisibleHeight = () => {
       if (!mobileQuery.matches) {
         layout.style.removeProperty('--webchat-visible-height');
+        layout.style.removeProperty('--webchat-visible-width');
         return;
       }
       if (frameId) cancelAnimationFrame(frameId);
@@ -444,8 +452,10 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
         const visibleBottom = viewport
           ? viewport.height + viewport.offsetTop
           : window.innerHeight;
+        const visibleWidth = viewport?.width || window.innerWidth;
         const globalHeaderHeight = document.querySelector('.header')?.getBoundingClientRect().height || 0;
         layout.style.setProperty('--webchat-visible-height', `${Math.round(visibleBottom)}px`);
+        layout.style.setProperty('--webchat-visible-width', `${Math.round(visibleWidth)}px`);
         layout.style.setProperty('--webchat-global-header-height', `${Math.round(globalHeaderHeight)}px`);
       });
     };
@@ -463,6 +473,7 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
       window.visualViewport?.removeEventListener('scroll', updateVisibleHeight);
       mobileQuery.removeEventListener?.('change', updateVisibleHeight);
       layout.style.removeProperty('--webchat-visible-height');
+      layout.style.removeProperty('--webchat-visible-width');
       layout.style.removeProperty('--webchat-global-header-height');
     };
   }, []);
@@ -484,6 +495,115 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
 
   const messagesRef = useRef(messages);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
+  const olderAnchorRef = useRef(null);
+  const prependedMessagesRef = useRef(null);
+  const browsingHistoryChatRef = useRef('');
+  const wasNearBottomRef = useRef(true);
+  const olderRequestRef = useRef(null);
+  const [olderError, setOlderError] = useState('');
+  const historyDiagnostics = useMemo(() => createHistoryDiagnostics(), []);
+  const historyInteractionRef = useRef({ touching: false, lastActivityAt: 0 });
+  const stopHistoryAnchorRef = useRef(null);
+  const historyDiagnosticsEnabled = false;
+  const olderTimingRef = useRef(null);
+  const publishOlderTiming = useCallback((sample) => {
+    // Temporary history diagnostics are enabled for reproducing scroll jumps.
+    if (!historyDiagnosticsEnabled) return;
+    if (olderTimingRef.current !== sample) return;
+    const snapshot = { ...sample, events: [...sample.events], elapsedMs: Math.round(performance.now() - sample.startedAt) };
+    delete snapshot.startedAt;
+    delete snapshot.renderStartedAt;
+    historyDiagnostics.publish(snapshot);
+  }, [historyDiagnosticsEnabled, historyDiagnostics]);
+  const recordOlderEvent = useCallback((sample, name, details = {}) => {
+    if (!sample || !historyDiagnosticsEnabled) return;
+    const atMs = Math.round(performance.now() - sample.startedAt);
+    if (name === 'container-scroll') {
+      // Sample scrolls; retain request/commit events even after a long gesture.
+      if (sample.lastScrollSampleAt != null && atMs - sample.lastScrollSampleAt < 150) return;
+      sample.lastScrollSampleAt = atMs;
+    }
+    const el = containerRef.current;
+    const nodes = el ? Array.from(el.querySelectorAll('[data-message-id]')) : [];
+    const top = el?.getBoundingClientRect().top ?? 0;
+    const visible = nodes.find(node => node.getBoundingClientRect().bottom > top);
+    sample.events = Array.isArray(sample.events) ? sample.events : [];
+    sample.events.push({
+      atMs,
+      name,
+      scrollTop: el ? Math.round(el.scrollTop) : null,
+      scrollHeight: el ? Math.round(el.scrollHeight) : null,
+      clientHeight: el ? Math.round(el.clientHeight) : null,
+      containerTop: el ? Math.round(top) : null,
+      viewportHeight: window.visualViewport ? Math.round(window.visualViewport.height) : null,
+      domMessageCount: nodes.length,
+      domFirstMessageId: nodes[0]?.dataset.messageId || null,
+      visibleMessageId: visible?.dataset.messageId || null,
+      visibleMessageOffset: visible ? Math.round(visible.getBoundingClientRect().top - top) : null,
+      ...details,
+    });
+    if (sample.events.length > 120) {
+      const oldestScroll = sample.events.findIndex(event => event.name === 'container-scroll');
+      sample.events.splice(oldestScroll >= 0 ? oldestScroll : 1, 1);
+    }
+    publishOlderTiming(sample);
+  }, [historyDiagnosticsEnabled, publishOlderTiming]);
+  useEffect(() => {
+    olderTimingRef.current = null;
+    historyDiagnostics.reset();
+    historyInteractionRef.current = { touching: false, lastActivityAt: 0 };
+    browsingHistoryChatRef.current = '';
+    setOlderError('');
+    setLoadingOlder(false);
+    loadingOlderRef.current = false;
+    return () => {
+      olderRequestRef.current?.abort();
+      olderRequestRef.current = null;
+      olderAnchorRef.current = null;
+      olderTimingRef.current = null;
+      stopHistoryAnchorRef.current?.();
+      stopHistoryAnchorRef.current = null;
+      historyDiagnostics.dispose();
+    };
+  }, [kind, id, historyDiagnostics]);
+  useLayoutEffect(() => {
+    const saved = olderAnchorRef.current;
+    const el = containerRef.current;
+    if (!saved || !el) return;
+    recordOlderEvent(saved.timing, 'layout-effect-start', { savedMessageId: saved.messageId });
+    olderAnchorRef.current = null;
+    if (saved.chatKey !== `${kind}:${id}`) return;
+    prependedMessagesRef.current = messages;
+    wasNearBottomRef.current = false;
+    const restoration = restoreHistoryAnchor(el, saved);
+    scrollButtonLastTopRef.current = el.scrollTop;
+    recordOlderEvent(saved.timing, 'after-anchor-restore', restoration);
+    const sample = saved.timing;
+    if (sample) {
+      sample.commitMs = Math.round(performance.now() - sample.renderStartedAt);
+      sample.scrollTopBefore = saved.scrollTop;
+      sample.scrollTopRestored = Math.round(el.scrollTop);
+      Object.assign(sample, restoration);
+      sample.phase = 'DOM committed';
+      recordOlderEvent(sample, 'dom-committed', restoration);
+      publishOlderTiming(sample);
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (olderTimingRef.current !== sample || containerRef.current !== el) return;
+        sample.afterTwoFramesMs = Math.round(performance.now() - sample.renderStartedAt);
+        sample.scrollTopAfterFrames = Math.round(el.scrollTop);
+        sample.maxScrollTop = Math.round(el.scrollHeight - el.clientHeight);
+        sample.phase = 'ready';
+        recordOlderEvent(sample, 'after-two-frames');
+        publishOlderTiming(sample);
+      }));
+    }
+    const stop = observeHistoryAnchor(el, messagesContentRef.current, saved, result => {
+      scrollButtonLastTopRef.current = el.scrollTop;
+      recordOlderEvent(sample, 'media-anchor-restore', result);
+    });
+    stopHistoryAnchorRef.current = stop;
+    return stop;
+  }, [messages, kind, id, publishOlderTiming, recordOlderEvent]);
   // Не показываем список, пока его высота на старте ещё меняется из-за медиа,
   // шрифтов и дочерних компонентов. Всё это время удерживаем нижнюю позицию,
   // чтобы пользователь увидел уже полностью собранный чат без скачков.
@@ -512,6 +632,7 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
     let disposed = false;
 
     const pinToBottom = () => {
+      if (browsingHistoryChatRef.current === chatKey) return;
       el.scrollTop = el.scrollHeight;
     };
     const reveal = () => {
@@ -557,7 +678,6 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
   useEffect(() => { hasMoreRef.current = hasMore; }, [hasMore]);
 
   const loadingOlderRef = useRef(loadingOlder);
-  useEffect(() => { loadingOlderRef.current = loadingOlder; }, [loadingOlder]);
 
   const bossFolderModeRef = useRef(bossFolderMode);
   useEffect(() => { bossFolderModeRef.current = bossFolderMode; }, [bossFolderMode]);
@@ -1103,6 +1223,7 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
         return res;
       } catch (err) {
         lastErr = err;
+        if (options.signal?.aborted) throw err;
         console.warn('tryEndpoints: failed for', url, err);
       }
     }
@@ -1169,7 +1290,7 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
     historySyncedChatRef.current = '';
     setFreshMessageIds({});
     const cachedMessages = readChatMessagesCache(user?.id, kind, id);
-    if (cachedMessages?.length) {
+    if (cachedMessages?.length && browsingHistoryChatRef.current !== chatKey) {
       const cachedPage = normalizeAsc(cachedMessages);
       loadedMessagesChatRef.current = chatKey;
       seenRef.current = new Set(cachedPage.map((message) => String(message?.id)).filter(Boolean));
@@ -1229,9 +1350,20 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
         loadedMessagesChatRef.current = `${kind}:${id}`;
         historySyncedChatRef.current = `${kind}:${id}`;
         writeChatMessagesCache(user?.id, kind, id, page);
-        messagesRef.current = page;
-        setMessages(page);
-        setHasMore(page.length === INITIAL_MESSAGES_LIMIT);
+        // A late initial refresh must not discard history loaded from the cache.
+        if (browsingHistoryChatRef.current === chatKey) {
+          setMessages(previous => {
+            const merged = new Map(previous.map(message => [String(message.id), message]));
+            page.forEach(message => merged.set(String(message.id), message));
+            const next = normalizeAsc(Array.from(merged.values()));
+            messagesRef.current = next;
+            return next;
+          });
+        } else {
+          messagesRef.current = page;
+          setMessages(page);
+          setHasMore(page.length === INITIAL_MESSAGES_LIMIT);
+        }
 
         prevLastIdRef.current = page.length ? String(page[page.length - 1]?.id) : null;
 
@@ -1501,16 +1633,37 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
     const firstMsg = messagesRef.current?.[0];
     if (!firstMsg?.id) return;
 
+    stopHistoryAnchorRef.current?.();
+    stopHistoryAnchorRef.current = null;
+    browsingHistoryChatRef.current = `${kind}:${id}`;
+    wasNearBottomRef.current = false;
+    const controller = new AbortController();
+    olderRequestRef.current = controller;
+    const sample = {
+      startedAt: performance.now(), timestamp: new Date().toISOString(),
+      diagnosticVersion: 'history-anchor-v4',
+      phase: 'request', kind, loadedCount: messagesRef.current.length,
+      userAgent: navigator.userAgent, visibility: document.visibilityState,
+      connection: navigator.connection?.effectiveType || 'unknown',
+      events: [],
+    };
+    olderTimingRef.current = sample;
+    recordOlderEvent(sample, 'request-start', { firstMessageId: String(firstMsg.id) });
+    publishOlderTiming(sample);
+    const timeout = setTimeout(() => controller.abort(), 20000);
+    loadingOlderRef.current = true;
+    setOlderError('');
     setLoadingOlder(true);
     try {
       const headers = { Accept: 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
-      const opts = { method: 'GET', headers, credentials: token ? 'omit' : 'include' };
+      const opts = { method: 'GET', headers, credentials: token ? 'omit' : 'include', signal: controller.signal };
 
       const baseUrls = historyCandidates(kind, id);
       const urlsWithParams = baseUrls.map(u => {
         const p = new URLSearchParams();
-        p.set('limit', String(PAGE_LIMIT));
+        p.set('limit', '30');
+        if (kind === 'room') p.set('deliveryScope', 'page');
         p.set('beforeId', String(firstMsg.id));
         if (kind === 'boss' && activeBossFolderRef.current?.userId) {
           p.set('userId', String(activeBossFolderRef.current.userId));
@@ -1519,46 +1672,105 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
       });
 
 
-      // --- перед запросом:
-      const prevScrollHeight = el.scrollHeight;
-      const prevScrollTop = el.scrollTop;
-
       const res = await tryEndpoints(urlsWithParams, opts);
-      const data = await res.json();
+      sample.headersMs = Math.round(performance.now() - sample.startedAt);
+      sample.status = res.status;
+      sample.serverTiming = res.headers.get('server-timing');
+      sample.phase = 'reading body';
+      publishOlderTiming(sample);
+      const bodyStartedAt = performance.now();
+      const raw = await res.text();
+      clearTimeout(timeout);
+      sample.bodyMs = Math.round(performance.now() - bodyStartedAt);
+      sample.responseCharacters = raw.length;
+      sample.phase = 'parsing JSON';
+      const parseStartedAt = performance.now();
+      const data = JSON.parse(raw);
+      sample.parseMs = Math.round(performance.now() - parseStartedAt);
+      if (olderRequestRef.current !== controller) return;
       const pageRaw = Array.isArray(data)
         ? data
         : (Array.isArray(data?.messages) ? data.messages : []);
       const page = normalizeAsc(pageRaw);
-      if (!page.length) { setHasMore(false); return; }
+      recordOlderEvent(sample, 'response-page-ready', { pageCount: page.length });
+      sample.pageCount = page.length;
+      if (!page.length) {
+        sample.phase = 'empty page';
+        publishOlderTiming(sample);
+        setHasMore(false);
+        return;
+      }
 
-      // prepend with dedup
-      setMessages(prev => {
-        const existing = new Set(prev.map(m => String(m.id)));
-        const filtered = page.filter(m => !existing.has(String(m.id)));
-        const next = [...filtered, ...prev];
-        messagesRef.current = next;
-        return next;
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+        || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      if (isIOS) {
+        sample.phase = 'waiting for scroll idle';
+        recordOlderEvent(sample, 'waiting-for-scroll-idle', { touching: historyInteractionRef.current.touching });
+        sample.scrollIdleWaitMs = await waitForHistoryIdle(el, historyInteractionRef.current, controller.signal);
+        if (olderRequestRef.current !== controller || containerRef.current !== el) return;
+        recordOlderEvent(sample, 'scroll-idle');
+      }
+
+      const existingIds = new Set(messagesRef.current.map(message => String(message.id)));
+      const additions = page.filter(message => !existingIds.has(String(message.id)));
+      sample.addedCount = additions.length;
+      if (!additions.length) {
+        sample.phase = 'already loaded';
+        if (page.length < 30) setHasMore(false);
+        recordOlderEvent(sample, 'page-already-loaded');
+        return;
+      }
+
+      // Capture what the user is reading NOW, not before the network request.
+      const saved = captureHistoryAnchor(el);
+      olderAnchorRef.current = {
+        ...saved,
+        chatKey: `${kind}:${id}`,
+        timing: sample,
+      };
+      recordOlderEvent(sample, 'before-set-messages', {
+        anchorMessageId: saved.messageId,
+        anchorOffset: saved.offset,
+      });
+      sample.renderStartedAt = performance.now();
+      sample.phase = 'waiting for React commit';
+      publishOlderTiming(sample);
+
+      // Commit once, with the current viewport anchor restored before paint.
+      flushSync(() => {
+        setMessages(prev => {
+          const existing = new Set(prev.map(m => String(m.id)));
+          const filtered = additions.filter(m => !existing.has(String(m.id)));
+          const next = [...filtered, ...prev];
+          messagesRef.current = next;
+          return next;
+        });
+        if (page.length < 30) setHasMore(false);
+        setLoadingOlder(false);
       });
 
       // mark seen...
       page.forEach(m => { if (m?.id) seenRef.current.add(String(m.id)); });
 
-      // Подождём рендера и пересчитаем scrollTop
-      // rAF один раз обычно OK; при проблемах — используем двойной rAF
-      requestAnimationFrame(() => {
-        // DOM уже отрисован — получим новую высоту
-        const newScrollHeight = el.scrollHeight;
-        const diff = newScrollHeight - prevScrollHeight;
-        el.scrollTop = prevScrollTop + diff;
-      });
-
-      if (page.length < PAGE_LIMIT) setHasMore(false);
     } catch (err) {
+      if (olderRequestRef.current !== controller) return;
+      sample.failedPhase = sample.phase;
+      sample.phase = controller.signal.aborted ? 'timeout' : 'error';
+      sample.errorName = err?.name || 'Error';
+      publishOlderTiming(sample);
+      setOlderError(controller.signal.aborted
+        ? 'Загрузка истории не завершилась за 20 секунд. Попробуйте ещё раз.'
+        : 'Не удалось загрузить историю. Нажмите «Показать предыдущие сообщения» ещё раз.');
       console.warn('loadOlder failed', err);
     } finally {
-      setLoadingOlder(false);
+      clearTimeout(timeout);
+      if (olderRequestRef.current === controller) {
+        olderRequestRef.current = null;
+        loadingOlderRef.current = false;
+        setLoadingOlder(false);
+      }
     }
-  }, [historyCandidates, tryEndpoints, normalizeAsc, token, kind, id]);
+  }, [historyCandidates, tryEndpoints, normalizeAsc, token, kind, id, publishOlderTiming, recordOlderEvent]);
 
   const resyncInFlightRef = useRef(false);
   const lastResyncAtRef = useRef(0);
@@ -1730,7 +1942,6 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
   // keep refs in sync (already done above, but safe)
   useEffect(() => { messagesRef.current = messages; }, [messages]);
   useEffect(() => { hasMoreRef.current = hasMore; }, [hasMore]);
-  useEffect(() => { loadingOlderRef.current = loadingOlder; }, [loadingOlder]);
 
 
 
@@ -1739,6 +1950,7 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
     const el = containerRef.current;
     if (!el) return;
     let ticking = false;
+    let scrollFrame = null;
     let touchStartY = null;
     let touchTravel = 0;
     let previousScrollTop = el.scrollTop;
@@ -1748,16 +1960,23 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
       if (event.deltaY < 0) olderHistoryIntentAtRef.current = Date.now();
     };
     const onTouchStart = (event) => {
+      historyInteractionRef.current.touching = true;
+      historyInteractionRef.current.lastActivityAt = performance.now();
       touchStartY = event.touches?.[0]?.clientY ?? null;
       touchTravel = 0;
     };
     const onTouchMove = (event) => {
+      historyInteractionRef.current.lastActivityAt = performance.now();
       const nextY = event.touches?.[0]?.clientY ?? null;
       if (touchStartY != null && nextY != null) {
         touchTravel += Math.max(0, nextY - touchStartY);
         if (touchTravel >= 24) olderHistoryIntentAtRef.current = Date.now();
       }
       touchStartY = nextY;
+    };
+    const onTouchEnd = (event) => {
+      historyInteractionRef.current.touching = event.touches?.length > 0;
+      historyInteractionRef.current.lastActivityAt = performance.now();
     };
     const onKeyDown = (event) => {
       if (event.key === 'ArrowUp' || event.key === 'PageUp' || event.key === 'Home') {
@@ -1766,15 +1985,27 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
     };
 
     const onScroll = () => {
+      historyInteractionRef.current.lastActivityAt = performance.now();
       if (!initialScrollReadyRef.current) return;
-      const currentScrollTop = el.scrollTop;
-      const movedUp = currentScrollTop < previousScrollTop - 1;
-      previousScrollTop = currentScrollTop;
       if (ticking) return;
       ticking = true;
-      requestAnimationFrame(() => {
-        const threshold = 120;
-        const hasRecentUserIntent = Date.now() - olderHistoryIntentAtRef.current < 1000;
+      scrollFrame = requestAnimationFrame(() => {
+        const currentScrollTop = el.scrollTop;
+        const activeTiming = olderTimingRef.current;
+        const movedUp = currentScrollTop < previousScrollTop - 1;
+        if (activeTiming) {
+          recordOlderEvent(activeTiming, 'container-scroll', {
+            previousScrollTop: Math.round(previousScrollTop),
+            movedUp,
+            loadingOlder: loadingOlderRef.current,
+          });
+        }
+        previousScrollTop = currentScrollTop;
+        // Fetch before the user reaches the first message, not at the edge.
+        // Keep the upward-intent guard so opening a chat never drains history.
+        const threshold = Math.max(600, Math.min(1800, el.clientHeight * 1.5));
+        // iOS momentum can continue long after the finger leaves the screen.
+        const hasRecentUserIntent = olderHistoryIntentAtRef.current > 0;
         const isActuallyScrollable = el.scrollHeight > el.clientHeight + 1;
         const shouldLoad = movedUp && isActuallyScrollable && hasRecentUserIntent && el.scrollTop <= threshold && hasMoreRef.current && !loadingOlderRef.current;
         if (shouldLoad) {
@@ -1789,17 +2020,48 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
     el.addEventListener('wheel', onWheel, { passive: true });
     el.addEventListener('touchstart', onTouchStart, { passive: true });
     el.addEventListener('touchmove', onTouchMove, { passive: true });
+    el.addEventListener('touchend', onTouchEnd, { passive: true });
+    el.addEventListener('touchcancel', onTouchEnd, { passive: true });
     el.addEventListener('keydown', onKeyDown);
     return () => {
+      cancelAnimationFrame(scrollFrame);
       el.removeEventListener('scroll', onScroll);
       el.removeEventListener('wheel', onWheel);
       el.removeEventListener('touchstart', onTouchStart);
       el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('touchend', onTouchEnd);
+      el.removeEventListener('touchcancel', onTouchEnd);
       el.removeEventListener('keydown', onKeyDown);
     };
     // empty deps: listener uses refs and stable callbacks
-  }, [loadOlder, kind, id]);
+  }, [loadOlder, kind, id, recordOlderEvent]);
 
+  // Recheck after each committed page: no new touch/scroll event is required
+  // when a short page still leaves the reader inside the preload threshold.
+  useEffect(() => {
+    if (loadingOlder || !hasMore || olderError || !initialScrollReady) return;
+    if (browsingHistoryChatRef.current !== `${kind}:${id}`) return;
+    const el = containerRef.current;
+    if (!el) return;
+    let frame = null;
+    const check = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const threshold = Math.max(600, Math.min(1800, el.clientHeight * 1.5));
+        if (el.scrollTop <= threshold && hasMoreRef.current && !loadingOlderRef.current) {
+          loadOlder().catch(err => console.warn('loadOlder error', err));
+        }
+      });
+    };
+    check();
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(check) : null;
+    observer?.observe(el);
+    if (messagesContentRef.current) observer?.observe(messagesContentRef.current);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+    };
+  }, [messages, loadingOlder, hasMore, olderError, initialScrollReady, kind, id, loadOlder]);
 
 
   // ----------------------- Кнопка "проскроллить вниз" ---------------------------- //
@@ -1810,16 +2072,31 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
 
     const { scrollTop, clientHeight, scrollHeight } = el;
     const distanceFromBottom = scrollHeight - (scrollTop + clientHeight);
+    const previousTop = scrollButtonLastTopRef.current;
+    scrollButtonLastTopRef.current = scrollTop;
+    if (scrollButtonProgrammaticRef.current || previousTop == null) {
+      setShowScrollDown(false);
+      wasNearBottomRef.current = distanceFromBottom <= BOTTOM_THRESHOLD;
+      return;
+    }
+    const movedDown = scrollTop > previousTop + 1;
+    const movedUp = scrollTop < previousTop - 1;
 
-    setShowScrollDown(distanceFromBottom > BOTTOM_THRESHOLD);
+    // Показываем кнопку только при движении вниз по истории.
+    // При движении вверх к более старым сообщениям она скрывается.
+    if (movedUp) setShowScrollDown(false);
+    else if (movedDown) setShowScrollDown(distanceFromBottom > BOTTOM_THRESHOLD);
+    wasNearBottomRef.current = distanceFromBottom <= BOTTOM_THRESHOLD;
   }, []);
 
   // Функция плавного скролла вниз
   const scrollToBottom = useCallback((behavior = 'smooth') => {
-    if (bottomRef.current) {
-      bottomRef.current.scrollIntoView({ behavior });
-    } else if (containerRef.current) {
-      // fallback
+    if (containerRef.current) {
+      scrollButtonProgrammaticRef.current = true;
+      window.setTimeout(() => {
+        scrollButtonProgrammaticRef.current = false;
+        scrollButtonLastTopRef.current = containerRef.current?.scrollTop ?? null;
+      }, behavior === 'smooth' ? 500 : 0);
       containerRef.current.scrollTo({ top: containerRef.current.scrollHeight, behavior });
     }
     setShowScrollDown(false);
@@ -1827,6 +2104,7 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
 
   // Если пришли новые сообщения — скрываем кнопку, если мы и так внизу.
   useEffect(() => {
+    if (prependedMessagesRef.current === messages) return;
     const el = containerRef.current;
     if (!el) return;
 
@@ -1834,7 +2112,7 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
     const distanceFromBottom = scrollHeight - (scrollTop + clientHeight);
 
     // Если новые сообщения, и мы близко к низу — автоматически прокрутить к низу и скрыть кнопку.
-    if (distanceFromBottom <= BOTTOM_THRESHOLD) {
+    if (wasNearBottomRef.current && distanceFromBottom <= BOTTOM_THRESHOLD) {
       // плавно, но можно и instant
       scrollToBottom('auto');
       setShowScrollDown(false);
@@ -2007,9 +2285,28 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
           return;
         }
 
-        // Собственную загрузку завершает HTTP-ответ. Не даём socket-событию,
-        // которое может прийти раньше, запускать тяжёлый рендер изображения.
+        // Сервер сначала сохраняет файл и отправляет socket-событие, а Safari
+        // может задержать HTTP-ответ ещё на несколько секунд. Подтверждаем
+        // optimistic-сообщение через socket сразу, поздний HTTP-ответ дедуплицируется.
         if (msg.tempId && pendingUploadTempIdsRef.current.has(String(msg.tempId))) {
+          pendingUploadTempIdsRef.current.delete(String(msg.tempId));
+          setMessages(prev => {
+            const tempKey = String(msg.tempId);
+            const serverKey = msg.id == null ? null : String(msg.id);
+            const index = prev.findIndex(message => String(message?.tempId || message?.id) === tempKey);
+            const withoutDuplicate = prev.filter((message, itemIndex) => {
+              if (itemIndex === index) return true;
+              return !serverKey || String(message?.id) !== serverKey;
+            });
+            if (index < 0) {
+              if (serverKey && withoutDuplicate.some(message => String(message?.id) === serverKey)) return withoutDuplicate;
+              return [...withoutDuplicate, msg];
+            }
+            const next = [...withoutDuplicate];
+            next[index] = mergeMessageKeepingFileMeta(next[index], { ...msg, sending: false, localText: false });
+            return next;
+          });
+          setIsUploading(false);
           if (msg.id) seenRef.current.add(String(msg.id));
           return;
         }
@@ -2050,7 +2347,10 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
             const hasTemp = prev.some(m => m?.tempId === msg.tempId);
             if (hasTemp) {
               // console.log('[handleIncoming] replace optimistic by saved via tempId', msg.tempId);
-              const next = prev.map(m => (m?.tempId === msg.tempId ? mergeMessageKeepingFileMeta(m, msg) : m));
+              const next = prev
+                .filter(m => !msg.id || String(m.id) !== String(msg.id) || m?.tempId === msg.tempId)
+                .map(m => (m?.tempId === msg.tempId ? mergeMessageKeepingFileMeta(m, msg) : m))
+                .filter((m, index, list) => !m.id || list.findIndex(item => String(item.id) === String(m.id)) === index);
               if (msg.id) seenRef.current.add(String(msg.id));
               return next;
             }
@@ -2075,7 +2375,8 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
         if (tempId) {
           // console.log('[handleIncoming] found pendingTemp match -> replace temp', { matchKey, tempId, msgId: msg.id });
           setMessages(prev => {
-            const replaced = prev.map(m => (m?.tempId === tempId ? mergeMessageKeepingFileMeta(m, msg) : m));
+            const replaced = prev.map(m => (m?.tempId === tempId ? mergeMessageKeepingFileMeta(m, msg) : m))
+              .filter((m, index, list) => !m.id || list.findIndex(item => String(item.id) === String(m.id)) === index);
             return replaced;
           });
           pendingTemp.current.delete(matchKey);
@@ -2391,9 +2692,15 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
     const lastId = messages.length ? String(messages[messages.length - 1]?.id) : null;
     const prevLast = prevLastIdRef.current;
 
+    prevLastIdRef.current = lastId;
+    if (prependedMessagesRef.current === messages || !wasNearBottomRef.current) return;
     if (lastId !== prevLast) {
-      requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ block: 'end', behavior: 'auto' }));
-      prevLastIdRef.current = lastId;
+      const frame = requestAnimationFrame(() => {
+        if (olderRequestRef.current || !wasNearBottomRef.current) return;
+        const el = containerRef.current;
+        if (el) el.scrollTop = el.scrollHeight;
+      });
+      return () => cancelAnimationFrame(frame);
     }
   }, [messages]);
 
@@ -2417,6 +2724,14 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
 
   // 1) Универсальный upload (File | Blob)
   const uploadFile = useCallback(async (fileOrBlob, opts) => {
+    const startedAt = performance.now();
+    const timing = {
+      timestamp: new Date().toISOString(), type: opts?.messageType,
+      originalBytes: fileOrBlob.size, mimeType: fileOrBlob.type,
+      userAgent: navigator.userAgent, phase: 'preparing',
+    };
+    const report = () => {};
+    report(timing);
 
     const fd = new FormData();
 
@@ -2444,7 +2759,6 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
 
     // console.log('opts = ', opts)
 
-    fd.append('file', file);
     if (kind === 'room') fd.append('roomId', String(id));
     else fd.append('chatId', String(id));
     const effectiveReplyToMessageId = opts?.replyToMessageId ?? replyDraft?.messageId ?? null;
@@ -2481,15 +2795,11 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
     pendingUploadTempIdsRef.current.add(optimisticId);
     setIsUploading(true);
     try {
-      const response = await fetch(`${API_BASE}/uploadfiles/fileFromWebchat`, {
-        method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        credentials: token ? 'omit' : 'include',
-        body: fd,
-      });
-
-      const responseData = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(responseData.error || `Upload failed ${response.status}`);
+      if (opts.messageType === 'image' && !opts.original) file = await prepareChatPhoto(file);
+      timing.prepareMs = Math.round(performance.now() - startedAt);
+      timing.sentBytes = file.size;
+      fd.append('file', file);
+      const responseData = await uploadChatMedia(`${API_BASE}/uploadfiles/fileFromWebchat`, fd, token, timing, report);
 
       let newMsg = responseData;
 
@@ -2515,6 +2825,10 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
       }
 
       if (optimisticMediaUrl) setTimeout(() => URL.revokeObjectURL(optimisticMediaUrl), 0);
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        timing.phase = 'ready';
+        report(timing);
+      }));
 
       return newMsg;
     } catch (err) {
@@ -2696,13 +3010,13 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
   }, [API_BASE, forwardSelectedIds, getForwardMessageKey, messages, token, user?.id, user?.name]);
 
   // 2) onFile для ChatFooter (вызывается with File)
-  const onFile = async (file) => {
+  const onFile = async (file, options = {}) => {
     try {
       if (!file) return;
       //const messageType = file.type?.startsWith('audio/') ? 'audio' : 'file';
       const messageType = detectFileType(file);
       //console.log('onFile messageType=', messageType);
-      await uploadFile(file, { messageType, replyToMessageId: replyDraft?.messageId ?? null });
+      await uploadFile(file, { messageType, original: options.original, replyToMessageId: replyDraft?.messageId ?? null });
     } catch (err) {
       console.error('onFile error', err);
       toast.info('Ошибка загрузки файла: ' + String(err));
@@ -2842,16 +3156,22 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
       if (!saved) return;
       setText((current) => current === text ? '' : current);
       setReplyDraft(null);
-      if (localTextId) setMessages(prev => prev.filter(m => m.id !== localTextId));
-
       if (saved?.id) {
         const sid = String(saved.id);
-        if (seenRef.current.has(sid)) {
-          // duplicate - skip
-        } else {
-          seenRef.current.add(sid);
-          setMessages(prev => [...prev, saved]);
-        }
+        seenRef.current.add(sid);
+        // HTTP and socket callbacks may both run before React commits either.
+        // Reconcile against the actual queued state, not the external seen set.
+        setMessages(prev => {
+          const matches = message => String(message.id) === sid
+            || (localTextId && message.id === localTextId)
+            || (saved.clientId && message.clientId === saved.clientId);
+          const index = prev.findIndex(matches);
+          const next = prev.filter(message => !matches(message));
+          next.splice(index < 0 ? next.length : Math.min(index, next.length), 0, {
+            ...saved, localText: false, sending: false,
+          });
+          return next;
+        });
       } else {
         const fallback = {
           ...saved,
@@ -3747,6 +4067,7 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
             buttonStyle={sidebarActionButtonStyle}
             activeButtonStyle={sidebarActiveActionButtonStyle}
           />
+          <WebPushControl buttonStyle={sidebarActionButtonStyle} />
           <button
             type="button"
             title="Создать личный чат"
@@ -4257,16 +4578,17 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
                     <>
                     {loading && <div>Загрузка сообщений...</div>}
                     {hasMore && (
-                      <div className="text-center">
+                      <div className="text-center" style={{ minHeight: 30 }}>
                         <button
                           type="button"
                           disabled={loadingOlder}
                           onClick={() => loadOlder().catch(err => console.warn('loadOlder error', err))}
                           className="rounded-full border border-gray-300 bg-white px-3 py-1 text-xs text-gray-600 shadow-sm hover:bg-gray-50 disabled:cursor-wait disabled:opacity-70"
-                          style={{ margin: 0 }}
+                          style={{ margin: 0, maxWidth: '100%', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
                         >
                           {loadingOlder ? 'Загрузка старых сообщений…' : 'Показать предыдущие сообщения'}
                         </button>
+                        {olderError && <div role="alert" className="mt-2 text-sm text-red-600">{olderError}</div>}
                       </div>
                     )}
                     {error && <div className="text-red-600">{error}</div>}
@@ -4424,20 +4746,25 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
 
 
 
-          {/* Кнопка "вниз" — позиционируется поверх контейнера внизу-справа */}
-          {showScrollDown && !isBossFolderRoot && (
-            <button
-              onClick={() => scrollToBottom("smooth")}
-              aria-label="Прокрутить вниз"
-              className="absolute right-9 bottom-12 z-50 p-1 rounded-full bg-white shadow-md hover:scale-105 transition-transform"
-            >
-              <IoArrowDownCircleOutline size={28} color="#007AFF" />
-            </button>
-          )}        
-
           {!isBossFolderRoot && (
-          <>
+          <div className="relative z-[1100] w-full min-w-0 shrink-0" style={{ overflow: 'visible' }}>
+            {showScrollDown && (
+              <button
+                type="button"
+                onClick={() => scrollToBottom('smooth')}
+                aria-label="Прокрутить вниз"
+                className="absolute flex items-center justify-center rounded-full bg-white shadow-md hover:scale-105 transition-transform"
+                style={{
+                  bottom: 'calc(100% + 12px)',
+                  right: 'calc(20px + env(safe-area-inset-right, 0px))',
+                  zIndex: 1101, width: 44, height: 44, padding: 0, margin: 0,
+                }}
+              >
+                <IoArrowDownCircleOutline size={28} color="#007AFF" />
+              </button>
+            )}
             {/* footer */}
+            {historyDiagnosticsEnabled && <HistoryDiagnostics store={historyDiagnostics} />}
             <ChatFooter
               text={text}
               setText={setText}
@@ -4451,7 +4778,7 @@ function ChatPage({ kind, id, API_BASE = process.env.NEXT_PUBLIC_API_URL || '' }
               editingMessage={editingMessage}
               cancelEdit={cancelEdit} 
             />
-          </>
+          </div>
           )}
           </DropZone>
             </>
@@ -5597,7 +5924,7 @@ const MessageItem = React.memo(function MessageItem({ message, messagesById = {}
                     controls
                     src={audioSrc}
                     preload="metadata"
-                    style={{ display: 'block', width: '100%', minWidth: 0, maxWidth: '100%' }}
+                    style={{ display: 'block', width: '100%', minWidth: 0, maxWidth: '100%', touchAction: 'manipulation' }}
                     onLoadedMetadata={() => {
                       if (audioRef.current) {
                         audioRef.current.playbackRate = audioPlaybackRate;

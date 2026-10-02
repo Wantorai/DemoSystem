@@ -1016,18 +1016,21 @@ table th {
 
     .webchat-footer-row .webchat-attach-button svg,
     .webchat-compose-actions .webchat-mic-button svg {
-        width: 25px !important;
-        height: 25px !important;
+        width: 30px !important;
+        height: 30px !important;
         color: #fff !important;
     }
 }
 
 @media (max-width: 768px) {
     .webchat-layout {
-        width: 100%;
+        width: min(100%, var(--webchat-visible-width, 100%));
+        max-width: min(100%, var(--webchat-visible-width, 100%));
         height: calc(var(--webchat-visible-height, 100dvh) - var(--webchat-global-header-height, 3.25rem)) !important;
         max-height: calc(var(--webchat-visible-height, 100dvh) - var(--webchat-global-header-height, 3.25rem)) !important;
         min-height: 0;
+        box-sizing: border-box;
+        overflow-x: clip !important;
         background: #fff;
     }
 
@@ -1355,6 +1358,19 @@ table th {
         min-height: 40px !important;
         max-height: 40px !important;
         align-self: center;
+        touch-action: manipulation;
+    }
+
+    /* Нативная панель Safari/Chrome оставляет слишком маленькую кнопку Play.
+       Увеличиваем только кнопку, не меняя ширину и сетку аудиопузыря. */
+    .webchat-simple-audio > audio::-webkit-media-controls-play-button,
+    .webchat-simple-audio > audio::-webkit-media-controls-overlay-play-button {
+        width: 40px;
+        height: 40px;
+        min-width: 40px;
+        min-height: 40px;
+        transform: scale(1.2);
+        transform-origin: center;
     }
 
     .webchat-message-other {
@@ -1363,16 +1379,19 @@ table th {
 
     .webchat-footer {
         z-index: 1000;
+        width: 100% !important;
+        min-width: 0;
+        max-width: 100% !important;
         box-sizing: border-box;
         overflow: visible !important;
-        padding: 10px calc(8px + env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) 8px !important;
+        padding: 10px calc(16px + env(safe-area-inset-right)) calc(18px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)) !important;
     }
 
     .webchat-recording-lock-hint {
-        position: fixed !important;
+        position: absolute !important;
         top: auto !important;
-        right: calc(24px + env(safe-area-inset-right)) !important;
-        bottom: calc(78px + env(safe-area-inset-bottom)) !important;
+        right: 0 !important;
+        bottom: calc(100% + 12px) !important;
         z-index: 10000 !important;
     }
 
@@ -1384,6 +1403,10 @@ table th {
     }
 
     .webchat-footer-row {
+        width: 100%;
+        min-width: 0;
+        max-width: 100%;
+        box-sizing: border-box;
         align-items: center !important;
         gap: 6px;
         min-height: 44px;
@@ -1391,7 +1414,11 @@ table th {
 
     .webchat-input-box {
         order: 1;
+        width: 0;
+        flex: 1 1 0% !important;
         min-width: 0;
+        max-width: 100%;
+        box-sizing: border-box;
         min-height: 36px !important;
         padding-right: 10px;
         padding-left: 10px;
@@ -1413,9 +1440,9 @@ table th {
 
     .webchat-attach-button {
         order: 2;
-        width: 44px !important;
-        height: 44px !important;
-        flex: 0 0 44px;
+        width: 48px !important;
+        height: 48px !important;
+        flex: 0 0 48px;
         border-radius: 50% !important;
         background: var(--primary-os-color) !important;
         color: #fff !important;
@@ -1423,9 +1450,27 @@ table th {
 
     .webchat-compose-actions {
         order: 3;
+        min-width: 0;
+        max-width: 100%;
         flex: 0 0 auto;
         gap: 2px !important;
-        margin-right: 10px;
+        margin-right: 0;
+    }
+
+    /* Keep the focused textarea rendered so recording doesn't dismiss the keyboard. */
+    .webchat-footer-recording-expanded .webchat-footer-row {
+        flex-wrap: wrap;
+    }
+
+    .webchat-footer-recording-expanded .webchat-input-box {
+        width: 100%;
+        flex: 1 1 100% !important;
+    }
+
+    .webchat-footer-recording-expanded .webchat-compose-actions {
+        width: 100%;
+        flex: 1 1 100%;
+        justify-content: flex-end;
     }
 
     .webchat-compose-actions button,
@@ -1467,8 +1512,8 @@ table th {
     }
 
     .webchat-compose-actions .webchat-mic-button {
-        width: 44px;
-        height: 44px;
+        width: 48px;
+        height: 48px;
         border-radius: 50% !important;
         background: #dc2626 !important;
         color: #fff !important;
@@ -1476,8 +1521,8 @@ table th {
 
     .webchat-footer-row .webchat-attach-button svg,
     .webchat-footer-row .webchat-compose-actions .webchat-mic-button svg {
-        width: 27px !important;
-        height: 27px !important;
+        width: 32.4px !important;
+        height: 32.4px !important;
         color: #fff !important;
     }
 
@@ -1489,6 +1534,27 @@ table th {
     .webchat-compose-actions button > span.text-2xl {
         font-size: 20px;
     }
+}
+
+.webchat-footer .webchat-attach-button,
+.webchat-footer .webchat-mic-button {
+    transition: transform 100ms ease, box-shadow 100ms ease, filter 100ms ease;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.webchat-footer .webchat-mic-button,
+.webchat-footer .webchat-mic-button * {
+    touch-action: none;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+.webchat-footer .webchat-attach-button:active:not(:disabled),
+.webchat-footer .webchat-mic-button.webchat-mic-pressed {
+    transform: scale(0.93);
+    filter: brightness(0.88);
+    box-shadow: 0 0 0 4px rgba(100, 116, 139, 0.18);
 }
 
 /* Универсальный адаптивный контейнер для широких рабочих таблиц. */
@@ -2382,4 +2448,15 @@ input,
 select,
 textarea {
     font: inherit;
+}
+
+.webchat-original-photo-option {
+    margin-left: 0;
+    min-height: 20px;
+}
+
+@media (min-width: 769px) {
+  .webchat-original-photo-option {
+    margin-left: 54px;
+  }
 }

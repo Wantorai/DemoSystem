@@ -211,7 +211,19 @@ router.get('/audio-compatible', async (req, res) => {
 
 
 
-router.post('/fileFromWebchat', upload.single('file'), async (req, res) => {
+router.post('/fileFromWebchat', (req, res, next) => {
+  const start = performance.now();
+  req.uploadTimingStart = start;
+  const json = res.json;
+  res.json = function timedJson(body) {
+    const received = req.uploadTimingReceived ?? performance.now();
+    res.setHeader('Server-Timing', `receive;dur=${(received - start).toFixed(1)}, processing;dur=${(performance.now() - received).toFixed(1)}`);
+    res.append('Access-Control-Expose-Headers', 'Server-Timing');
+    return json.call(this, body);
+  };
+  next();
+}, upload.single('file'), async (req, res) => {
+  req.uploadTimingReceived = performance.now();
 
 
   log('[UPLOADWEBCHATROUTES] start');

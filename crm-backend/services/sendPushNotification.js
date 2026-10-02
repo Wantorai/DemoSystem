@@ -160,6 +160,11 @@ async function sendPushNotification(target, title, body, data = {}, options = {}
     });
 
     let unifiedResult = null;
+    // Browser delivery is independent of Expo success and native fallback policy.
+    if (targetUserIdsSet.size && !options.dataOnly && (title || body)) {
+      sendUnifiedPushToUserIds(Array.from(targetUserIdsSet), title, body, data, { browserOnly: true })
+        .catch(error => console.warn('[WebPush] delivery failed:', error?.message));
+    }
 
     if (expoTokens.length === 0) {
       pushTraceLog('[PushTrace][send] skip:no-expo-tokens', { traceId });

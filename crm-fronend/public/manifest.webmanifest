@@ -1,0 +1,22 @@
+{
+  "id": "/webchats",
+  "name": "OrderSpace — Чаты",
+  "short_name": "Чаты",
+  "start_url": "/webchats",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "icons": [
+    {
+      "src": "/icons/apple-touch-icon.png",
+      "type": "image/png",
+      "sizes": "180x180"
+    },
+    {
+      "src": "/images/company-icons/orderspace-adaptive-icon.png",
+      "type": "image/png",
+      "sizes": "1024x1024"
+    }
+  ]
+}

@@ -1,9 +1,8 @@
 ﻿"use client";
 
-import { useState, useContext } from "react";
+import { useState, useContext, useRef } from "react";
 import { AuthContext } from "../../context/AuthContext";
 import { useRouter } from "next/navigation";
-import Spinner from "../../components/Spinner";
 import "./login.css";
 
 export default function LoginPage() {
@@ -13,9 +12,26 @@ export default function LoginPage() {
   const { login } = useContext(AuthContext);
   const router = useRouter();
   const [loading, setLoading] = useState(false);
+  const touchStartRef = useRef(null);
+  const submittingRef = useRef(false);
+
+  const rememberTouch = (event) => {
+    const touch = event.touches[0];
+    touchStartRef.current = touch ? { x: touch.clientX, y: touch.clientY } : null;
+  };
+  const focusTouchedInput = (event) => {
+    const start = touchStartRef.current;
+    const touch = event.changedTouches[0];
+    touchStartRef.current = null;
+    // Focus within the actual tap; don't turn a scrolling gesture into focus.
+    if (!start || !touch || Math.hypot(touch.clientX - start.x, touch.clientY - start.y) > 10) return;
+    event.currentTarget.focus({ preventScroll: true });
+  };
 
   const handleLogin = async (e) => {
     e.preventDefault();
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setError("");
     setLoading(true);
 
@@ -52,32 +68,47 @@ export default function LoginPage() {
       console.error("Ошибка авторизации:", err);
       setError("Ошибка сети. Проверьте подключение и попробуйте снова.");
     } finally {
+      submittingRef.current = false;
       setLoading(false);
     }
   };
 
 
-if (loading) {
-  return <Spinner />;
-}
 
   return (
     <main className="login-page">
       <section className="login-card">
       <h2>Вход в систему</h2>
-      <form className="login-form" onSubmit={handleLogin}>
+      <form className="login-form" onSubmit={handleLogin} aria-busy={loading}>
         <div className="login-fields">
         <input
+          id="login-username"
+          name="username"
+          aria-label="Имя пользователя"
           type="text"
           placeholder="Имя пользователя"
           autoComplete="username"
           inputMode="text"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          enterKeyHint="next"
+          onTouchStart={rememberTouch}
+          onTouchEnd={focusTouchedInput}
+          onTouchCancel={() => { touchStartRef.current = null; }}
           value={name}
           onChange={(e) => setName(e.target.value)}
           required
         />
         <input
+          id="login-password"
+          name="password"
+          aria-label="Пароль"
           type="password"
+          enterKeyHint="go"
+          onTouchStart={rememberTouch}
+          onTouchEnd={focusTouchedInput}
+          onTouchCancel={() => { touchStartRef.current = null; }}
           placeholder="Пароль"
           autoComplete="current-password"
           value={password}
@@ -86,7 +117,7 @@ if (loading) {
         />
         </div>
         <div>
-        <button type="submit">Войти</button>
+        <button type="submit" disabled={loading}>{loading ? 'Вход…' : 'Войти'}</button>
         </div>
         {error ? (
           <div style={{ marginTop: 10, color: "#b91c1c" }}>{error}</div>
@@ -96,4 +127,3 @@ if (loading) {
     </main>
   );
 }
-

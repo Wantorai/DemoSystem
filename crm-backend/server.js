@@ -941,12 +941,12 @@ io.on('connection', async (socket) => {
 
         const tokens = Array.from(new Set(tokensRows.map(r => r.token).filter(Boolean)));
 
-        if (tokens.length > 0) {
+        if (recipientUserIds.length > 0) {
           const title = `От ${fullMsg.User?.name || 'Коллеги'}`;
           const body = (content && content.length > 0) ? (content.length > 100 ? content.slice(0,100)+'...' : content) : (fileName || 'НС:');
 
           // sendPushNotification умеет принимать массив токенов или токен
-          await sendPushNotification(tokens, title, body, { screen: 'admin', chatId });
+          await sendPushNotification(recipientUserIds, title, body, { screen: 'admin', chatId });
         }
       }
 
@@ -1183,12 +1183,12 @@ io.on('connection', async (socket) => {
 
         const tokens = Array.from(new Set(tokensRows.map(r => r.token).filter(Boolean)));
 
-        if (tokens.length > 0) {
+        if (recipientUserIds.length > 0) {
           const title = `От ${fullMsg.User?.name || 'Не опознан'}`;
           const body = (content && content.length > 0) ? (content.length > 100 ? content.slice(0,100)+'...' : content) : (fileName || 'НС:');
 
           // sendPushNotification умеет принимать массив токенов или токен
-          await sendPushNotification(tokens, title, body, { screen: 'room', roomId });
+          await sendPushNotification(recipientUserIds, title, body, { screen: 'room', roomId });
         }
       }
 

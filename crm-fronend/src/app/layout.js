@@ -128,6 +128,9 @@ export default function RootLayout({ children }) {
     
     <html lang={process.env.NEXT_PUBLIC_LANGUAGE === "eng" ? "en" : "ru"}>
       <head>
+        <link rel="manifest" href="/manifest.webmanifest" />
+        <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta charSet="UTF-8"/><title>{getTitle()}</title>
         {/* <meta charSet="UTF-8"/><title></title> */}
         <link rel="lcp" href="#main-search" />

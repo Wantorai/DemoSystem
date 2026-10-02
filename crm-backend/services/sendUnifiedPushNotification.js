@@ -109,6 +109,7 @@ const sendUnifiedPushToUserIds = async (userIds, title, body, data = {}, options
   // keep only the newest row for each (userId, instance, distributorId).
   const dedupMap = new Map();
   for (const row of rawRows) {
+    if ((row.distributorId === 'web-browser') !== Boolean(options.browserOnly)) continue;
     const userId = Number(row.userId);
     const instance = String(row.instance || '');
     const distributorId = String(row.distributorId || '');
@@ -210,7 +211,14 @@ const sendUnifiedPushToUserIds = async (userIds, title, body, data = {}, options
       },
     };
     try {
-      const response = await webpush.sendNotification(subscription, payload, { TTL: 120 });
+      const outgoing = options.browserOnly
+        ? JSON.stringify({ title: String(title || 'Новое сообщение').slice(0, 160),
+          body: String(body || '').slice(0, 300), data: {
+            screen: data.screen, chatType: data.chatType, roomId: data.roomId,
+            chatId: data.chatId, messageId: data.messageId, alerts: data.alerts,
+          } })
+        : payload;
+      const response = await webpush.sendNotification(subscription, outgoing, { TTL: options.browserOnly ? 86400 : 120, timeout: 10000 });
       sent += 1;
       unifiedPushLog('[UnifiedPush][send] delivery:ok', {
         traceId,

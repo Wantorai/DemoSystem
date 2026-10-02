@@ -1,5 +1,6 @@
 ﻿const express = require('express');
 const router = express.Router();
+router.use(require('./webPushRoutes'));
 const authMiddleware = require('../middleware/authMiddleware');
 const {
   push,

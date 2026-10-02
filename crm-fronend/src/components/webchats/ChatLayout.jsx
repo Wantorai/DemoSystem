@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import ChatList from './ChatList';
 import CrossChatEntry from './CrossChatEntry';
 import AllPinsView from './AllPinsView';
+import WebPushControl from './WebPushControl';
 import { applyWebChatFontScale } from '../AppStyleLoader';
 import { AuthContext } from '../../context/AuthContext';
 import {
@@ -364,6 +365,7 @@ export default function ChatLayout({
             background: '#f9fafb',
           }}>
             <div ref={toolbarRef} style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+              <WebPushControl buttonStyle={sidebarActionButtonStyle} />
               <button
                 type="button"
                 title={searchQuery ? `Поиск: ${searchQuery}` : 'Поиск'}

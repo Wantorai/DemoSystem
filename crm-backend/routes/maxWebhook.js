@@ -2,7 +2,7 @@
 const express = require('express');
 const router = express.Router();
 require('dotenv').config();
-const { MaxChat, MaxMessage, PushToken } = require('../models');
+const { MaxChat, MaxMessage, User } = require('../models');
 const { getIO } = require('../socket');
 const { sendPushNotification } = require('../services/sendPushNotification');
 const { verifyPersonalInvitePayload } = require('../services/maxInvite');
@@ -243,55 +243,13 @@ router.post('/webhooks/max', express.json(), async (req, res) => {
       }
 
 
-      let tokens = [];
-      let targetUsers = [];
-      
-      // Проверяем, назначен ли уже ответственный за чат
-      if (chat.assigneeId) {
-        // Чат уже закреплен за сотрудником - отправляем только ему
-        //console.log(`📌 Чат ${chat.id} уже закреплен за сотрудником ${chat.assigneeId}`);
-        targetUsers = [chat.assigneeId];
-        
-        const tokenRows = await PushToken.findAll({
-          where: { userId: chat.assigneeId },
-          attributes: ['token'],
-        });
-        
-        tokens = tokenRows.map(row => row.token).filter(token => token);
 
-        if (tokens.length === 0) {
-          //console.log(`⚠️ У назначенного сотрудника (${chat.assigneeId}) нет активных токенов`);
-        }
-
-
-      } else {
-        // Чат свободен - отправляем всем активным пользователям, кроме тех, кто заблокирован
-        //console.log(`📢 Чат ${chat.id} свободен, рассылка всем сотрудникам`);
-        
-        // Получаем всех активных пользователей (можно добавить фильтр по роли)
-        const tokenRows = await PushToken.findAll({
-          attributes: ['token', 'userId'],
-        });
-        
-        tokens = tokenRows.map(row => row.token).filter(token => token);
-        targetUsers = tokenRows.map(row => row.userId).filter(id => id);
-      }
-
-        
-        // // Получаем ВСЕ активные push-токены из БД
-        // const tokenRows = await PushToken.findAll({
-        //   attributes: ['token', 'userId'],
-        // });
-
-        // // Собираем все токены
-        // const tokens = tokenRows
-        //   .map(row => row.token)
-        //   .filter(token => token); // Фильтруем пустые токены
-
-        // Убираем дубликаты
-        const uniqueTokens = [...new Set(tokens)];
-
-        if (uniqueTokens.length === 0) {
+        // Resolve users independently of installed Android applications.
+        const participants = Array.isArray(chat.participantIds) ? chat.participantIds.map(Number).filter(Boolean) : [];
+        const targetUsers = chat.assigneeId
+          ? [...new Set([Number(chat.assigneeId), ...participants])]
+          : (await User.findAll({ where: { isActive: true, canMax: true }, attributes: ['id'] })).map(user => user.id);
+        if (targetUsers.length === 0) {
           //console.log('⚠️ Нет активных push-токенов для рассылки');
           return;
         }
@@ -348,7 +306,7 @@ router.post('/webhooks/max', express.json(), async (req, res) => {
         //console.log(`📤 Отправка push ${uniqueTokens.length} пользователям для Max чата ${chat.id}`);
 
         // Отправляем push-уведомление
-        await sendPushNotification(uniqueTokens, title, body, data);
+        await sendPushNotification(targetUsers, title, body, data);
         
         //console.log(`✅ Push отправлен для Max чата ${chat.id}`);
 

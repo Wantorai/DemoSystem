@@ -2,6 +2,7 @@
 
 import { createContext, useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { disableWebPush } from "../components/webchats/webPush";
 
 export const AuthContext = createContext({
   user: null,
@@ -69,7 +70,8 @@ const AuthProvider = ({ children }) => {
     setInitialized(true);
   }, []);
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
+    await disableWebPush(localStorage.getItem("token")).catch(() => {});
     // Отменяем все текущие запросы
     try { controllerRef.current?.abort(); } catch (e) {console.warn(e)}
     // Очищаем локальное хранилище и state
