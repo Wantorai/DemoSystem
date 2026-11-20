@@ -94,6 +94,37 @@ jobs:
           printf '%s\n' "$AWS_SSH_KEY" > ~/.ssh/id_ed25519
           printf '%s\n' "$AWS_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+      - name: Inspect OIDC identity
+        shell: bash
+        env:
+          EXPECTED_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+        run: |
+          node <<'NODE'
+          async function main() {
+            const url = new URL(process.env.ACTIONS_ID_TOKEN_REQUEST_URL);
+            url.searchParams.set('audience', 'sts.amazonaws.com');
+            const response = await fetch(url, {
+              headers: { Authorization: 'Bearer ' + process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN },
+              signal: AbortSignal.timeout(15000),
+            });
+            if (!response.ok) throw new Error('OIDC request failed: HTTP ' + response.status);
+            const { value } = await response.json();
+            if (typeof value !== 'string' || value.split('.').length !== 3) {
+              throw new Error('Unexpected OIDC response');
+            }
+            const claims = JSON.parse(Buffer.from(value.split('.')[1], 'base64url').toString('utf8'));
+            // Never print the JWT, request token, full response or full claim set.
+            const identity = { role: process.env.EXPECTED_ROLE_ARN };
+            for (const key of ['iss', 'aud', 'sub', 'ref', 'repository', 'environment', 'job_workflow_ref']) {
+              identity[key] = claims[key] ?? null;
+            }
+            console.log(JSON.stringify(identity, null, 2));
+          }
+          main().catch(() => {
+            console.error('Unable to inspect OIDC identity; token and response omitted.');
+            process.exitCode = 1;
+          });
+          NODE
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6.3.0
         with:
@@ -102,6 +133,7 @@ jobs:
           role-session-name: demo-${{ github.run_id }}-${{ github.run_attempt }}
           role-duration-seconds: 3600
           allowed-account-ids: '734828257743'
+          retry-max-attempts: 2
       - name: Open temporary SSH access
         id: ingress
         shell: bash
