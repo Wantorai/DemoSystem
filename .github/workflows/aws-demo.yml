@@ -1,0 +1,107 @@
+name: Demo CI and AWS deploy
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: crm-backend
+    steps:
+      - uses: actions/checkout@v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6.5.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: crm-backend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test -- --runInBand
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: crm-fronend
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_PUBLIC_API_URL: http://localhost:5000/api
+      NEXT_PUBLIC_SOCKET_URL: http://localhost:5000
+      NEXT_PUBLIC_STATIC_BASE_URL: http://localhost:5000
+      STATIC_BASE_URL: http://localhost:5000
+    steps:
+      - uses: actions/checkout@v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6.5.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: crm-fronend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run check
+      - run: npm run build
+
+  deploy:
+    needs: [backend, frontend]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.AWS_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: aws-demo
+    concurrency:
+      group: aws-demo-deploy
+      cancel-in-progress: false
+    env:
+      AWS_HOST: ${{ secrets.AWS_HOST }}
+      AWS_USER: ${{ secrets.AWS_USER }}
+      AWS_SSH_KEY: ${{ secrets.AWS_SSH_KEY }}
+      AWS_KNOWN_HOSTS: ${{ secrets.AWS_KNOWN_HOSTS }}
+    steps:
+      - uses: actions/checkout@v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6.5.0
+        with:
+          node-version-file: .nvmrc
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${AWS_HOST:?Set AWS_HOST}" "${AWS_USER:?Set AWS_USER}"
+          : "${AWS_SSH_KEY:?Set AWS_SSH_KEY}" "${AWS_KNOWN_HOSTS:?Set AWS_KNOWN_HOSTS}"
+          [[ "$AWS_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
+          [[ "$AWS_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$AWS_SSH_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$AWS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+      - name: Deploy checked commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          latest=$(git ls-remote origin refs/heads/main | cut -f1)
+          if [[ "$latest" != "$GITHUB_SHA" ]]; then echo "A newer main commit exists; refusing stale deployment"; exit 1; fi
+          node scripts/ci/sync-source.cjs --check .
+          git archive --format=tar.gz -o "$RUNNER_TEMP/demo.tar.gz" HEAD crm-backend crm-fronend scripts/ci
+          remote="/tmp/demo-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.tar.gz"
+          opts=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4)
+          scp "${opts[@]}" "$RUNNER_TEMP/demo.tar.gz" "$AWS_USER@$AWS_HOST:$remote"
+          ssh "${opts[@]}" "$AWS_USER@$AWS_HOST" "bash -s -- '$remote' '$GITHUB_SHA'" < scripts/ci/deploy-aws.sh
+      - name: Remove runner SSH key
+        if: always()
+        run: rm -f ~/.ssh/id_ed25519
+

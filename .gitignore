@@ -45,3 +45,7 @@ venv/
 
 # Generated installers
 crm-fronend/public/downloads/*.exe
+
+# Server-owned CI deployment state
+.ci-deploy.env
+.ci-state/
