@@ -128,3 +128,20 @@ Review the demo diff before every public push.
 
 The GitHub Actions implementation is prepared locally; it is operational only
 after secrets/server configuration are set and the first AWS run succeeds.
+
+### Temporary SSH access through GitHub OIDC
+
+The deploy job assumes an AWS role using OIDC; no permanent AWS access keys
+are stored in GitHub. Configure aws-demo environment variables AWS_ROLE_ARN,
+AWS_REGION and AWS_SECURITY_GROUP_ID. The trust policy must restrict the
+repository Wantorai/DemoSystem, environment aws-demo and ref refs/heads/main.
+The role needs ec2:AuthorizeSecurityGroupIngress and
+ec2:RevokeSecurityGroupIngress on the selected security-group ARN only.
+
+The workflow opens TCP 22 for the runner public IPv4 /32, waits for SSH,
+deploys, and revokes the exact returned rule ID in an always() cleanup step.
+Existing rules are never reused or deleted. Duplicate-rule errors stop the
+deployment. Rule IDs are recorded in the run summary for manual cleanup.
+A lost runner, force cancellation, expired credentials or AWS outage can
+prevent cleanup: check the security group for the rule described as
+GitHub Actions demo RUN_ID/RUN_ATTEMPT and remove it manually if necessary.

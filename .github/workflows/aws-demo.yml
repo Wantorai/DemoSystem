@@ -62,10 +62,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: aws-demo
+    permissions:
+      contents: read
+      id-token: write
     concurrency:
       group: aws-demo-deploy
       cancel-in-progress: false
     env:
+      AWS_SECURITY_GROUP_ID: ${{ vars.AWS_SECURITY_GROUP_ID }}
+      AWS_PAGER: ''
       AWS_HOST: ${{ secrets.AWS_HOST }}
       AWS_USER: ${{ secrets.AWS_USER }}
       AWS_SSH_KEY: ${{ secrets.AWS_SSH_KEY }}
@@ -89,6 +94,41 @@ jobs:
           printf '%s\n' "$AWS_SSH_KEY" > ~/.ssh/id_ed25519
           printf '%s\n' "$AWS_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: demo-${{ github.run_id }}-${{ github.run_attempt }}
+          role-duration-seconds: 3600
+          allowed-account-ids: '734828257743'
+      - name: Open temporary SSH access
+        id: ingress
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${AWS_SECURITY_GROUP_ID:?Set AWS_SECURITY_GROUP_ID}"
+          [[ "$AWS_SECURITY_GROUP_ID" =~ ^sg-[a-f0-9]+$ ]]
+          runner_ip=$(curl -4 --fail --silent --show-error --retry 3 --connect-timeout 10 --max-time 20 https://checkip.amazonaws.com)
+          node -e 'if (require("node:net").isIP(process.argv[1]) !== 4) process.exit(1)' "$runner_ip"
+          permissions=$(jq -cn --arg cidr "$runner_ip/32" --arg description "GitHub Actions demo $GITHUB_RUN_ID/$GITHUB_RUN_ATTEMPT"             '[{IpProtocol:"tcp",FromPort:22,ToPort:22,IpRanges:[{CidrIp:$cidr,Description:$description}]}]')
+          aws ec2 authorize-security-group-ingress --group-id "$AWS_SECURITY_GROUP_ID"             --ip-permissions "$permissions" --output json > "$RUNNER_TEMP/demo-ingress.json"
+          rule_id=$(jq -er '.SecurityGroupRules[0].SecurityGroupRuleId' "$RUNNER_TEMP/demo-ingress.json")
+          [[ "$rule_id" =~ ^sgr-[a-f0-9]+$ ]]
+          echo "rule_id=$rule_id" >> "$GITHUB_OUTPUT"
+          echo "Temporary SSH rule: $rule_id ($runner_ip/32)" >> "$GITHUB_STEP_SUMMARY"
+      - name: Wait for SSH access
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in {1..6}; do
+            if ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 "$AWS_USER@$AWS_HOST" true; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "SSH is still unavailable after opening temporary access" >&2
+          exit 1
       - name: Deploy checked commit
         shell: bash
         run: |
@@ -101,6 +141,30 @@ jobs:
           opts=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4)
           scp "${opts[@]}" "$RUNNER_TEMP/demo.tar.gz" "$AWS_USER@$AWS_HOST:$remote"
           ssh "${opts[@]}" "$AWS_USER@$AWS_HOST" "bash -s -- '$remote' '$GITHUB_SHA'" < scripts/ci/deploy-aws.sh
+      - name: Close temporary SSH access
+        if: always()
+        shell: bash
+        env:
+          RULE_ID: ${{ steps.ingress.outputs.rule_id }}
+        run: |
+          set -euo pipefail
+          # Also recover the ID if opening the rule succeeded but publishing its output failed.
+          if [[ -z "$RULE_ID" && -s "$RUNNER_TEMP/demo-ingress.json" ]]; then
+            RULE_ID=$(jq -r '.SecurityGroupRules[0].SecurityGroupRuleId // empty' "$RUNNER_TEMP/demo-ingress.json")
+          fi
+          if [[ -z "$RULE_ID" ]]; then exit 0; fi
+          [[ "$RULE_ID" =~ ^sgr-[a-f0-9]+$ ]]
+          for attempt in {1..3}; do
+            if aws ec2 revoke-security-group-ingress --group-id "$AWS_SECURITY_GROUP_ID"               --security-group-rule-ids "$RULE_ID" --output json > "$RUNNER_TEMP/demo-revoke.json"; then
+              if jq -e --arg id "$RULE_ID" '.Return == true and any(.RevokedSecurityGroupRules[]?; .SecurityGroupRuleId == $id)' "$RUNNER_TEMP/demo-revoke.json" >/dev/null; then
+                echo "Removed temporary SSH rule: $RULE_ID" >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+              fi
+            fi
+            sleep 5
+          done
+          echo "::error::Could not confirm removal of $RULE_ID from $AWS_SECURITY_GROUP_ID. Check and remove this temporary rule in AWS."
+          exit 1
       - name: Remove runner SSH key
         if: always()
         run: rm -f ~/.ssh/id_ed25519
