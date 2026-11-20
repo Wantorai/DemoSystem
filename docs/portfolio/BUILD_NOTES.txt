@@ -1,0 +1,37 @@
+ArtCoupe Manufacturing Software portfolio
+
+Deliverable: Roman_Sidorenko_ArtCoupe_Portfolio.pdf
+Format: six US Letter pages, American English, selectable text and contact links.
+Editable document: Roman_Sidorenko_ArtCoupe_Portfolio.html (images embedded).
+
+Rebuild from the repository root:
+  node portfolio_work/build_recruiter_portfolio.cjs
+  node portfolio_work/check_recruiter_portfolio.cjs
+
+The build uses the existing local puppeteer-core, pdf-lib, pdfjs-dist,
+and @napi-rs/canvas packages under portfolio_work/node_modules.
+Chrome is used locally for PDF printing. No application deployment is performed.
+Preview PNGs are rendered from the resulting PDF, not from the HTML source.
+
+Editorial sources:
+- User's project answers in this conversation.
+- Roman_Sidorenko_Fullstack_Resume.pdf supplied by the user.
+- About my scripts.txt supplied by the user.
+- Existing artcoupe_manufacturing_software_portfolio.pdf and its screenshot assets.
+- docs/project-description and relevant backend, frontend, mobile, and desktop sources.
+
+Editorial decisions:
+- Public project name: ArtCoupe Manufacturing Software.
+- Sole developer and production use are based on the user's statements.
+- Contract start: March 2023, from the resume. The user says the contract is
+  completed, so the older resume's 'Present' end date is not repeated.
+- No exact completion date, user counts, percentage gains, or load benchmarks
+  are invented. Business outcomes are presented as reported, qualitative benefits.
+- The architecture diagram is logical, not a claim about server count or topology.
+- Cross-company communication is described as a capability, not measured scale.
+- Company source code is private; the GitHub link points to the developer's profile.
+- The existing portfolio PDF is preserved unchanged.
+
+To revise content, edit the HTML template in build_recruiter_portfolio.cjs and rebuild.
+The standalone HTML can also be edited directly and printed from a browser;
+rebuilding from the script will replace that HTML with the template version.
