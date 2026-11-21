@@ -34,21 +34,24 @@ function list(root, directory, output = []) {
   }
   return output;
 }
-if (process.argv[2] === '--check') {
-  const root = process.argv[3];
+function check(root) {
   const names = execFileSync('git', ['ls-files', '-z', '--', ...apps], { cwd: root, encoding: 'utf8' }).split('\0').filter(Boolean);
   for (const name of names) {
     if (path.basename(name).startsWith('.env') && path.basename(name).includes('.example')) continue;
     target(root, name);
   }
-} else {
-  const source = path.resolve(process.argv[2]);
-  const root = fs.realpathSync(process.argv[3]);
+}
+function syncSource(sourceArg, rootArg) {
+  const source = fs.realpathSync(sourceArg);
+  const root = fs.realpathSync(rootArg);
   const names = [...apps].flatMap(app => list(source, app)).sort();
   const manifest = path.join(root, '.ci-state', 'managed-files.json');
   const previous = fs.existsSync(manifest) ? JSON.parse(fs.readFileSync(manifest, 'utf8')) : [];
   // Validate all paths before touching the deployment.
   for (const name of new Set([...names, ...previous])) target(root, name);
+  // Journal all intended changes before copying, so rollback also removes partially copied new files.
+  fs.writeFileSync(manifest + '.tmp', JSON.stringify([...new Set([...previous, ...names])]));
+  fs.renameSync(manifest + '.tmp', manifest);
   for (const name of names) {
     const destination = target(root, name);
     fs.mkdirSync(path.dirname(destination), { recursive: true });
@@ -62,3 +65,9 @@ if (process.argv[2] === '--check') {
   fs.renameSync(manifest + '.tmp', manifest);
 }
 
+
+module.exports = { target, safe, list, syncSource, check };
+if (require.main === module) {
+  if (process.argv[2] === '--check') check(process.argv[3]);
+  else syncSource(process.argv[2], process.argv[3]);
+}

@@ -106,18 +106,59 @@ on the server; review any old files left by previous incremental deployments.
 Do not run the old manual AWS deploy concurrently with Actions. Workflow
 concurrency plus a server flock prevent simultaneous CI deployments.
 
-Deployment currently updates the existing installation in place. It is not an
-atomic or zero-downtime release: an installation, build or migration failure
-may leave changed files, and failed health checks fail the workflow without
-automatically restoring the previous release.
+Deployment updates the existing installation in place and is not zero-downtime.
+Before changing it, the server checks HTTP liveness, migration history and disk
+space, then stores a server-local snapshot under `.ci-state/snapshots`. It
+contains managed application source, installed node_modules and the compiled
+Next.js build (excluding its cache), not .env, uploads or the database.
+A valid managed-files manifest and successful-revision from the original CI
+deployment are required. Allow roughly twice the application/dependency size
+as free space for snapshot creation and restore. Snapshots are private on the
+server and never uploaded as GitHub artifacts.
 
-For application rollback, revert the offending changes in this repository,
-commit and push to main. The resulting commit must pass CI and is deployed
-normally. For a broken release requiring immediate intervention, use the
-recorded successful revision to restore the application manually. Do not
-automatically undo database migrations: use a reviewed corrective migration,
-or restore the AWS backup with an explicit recovery plan. A code revert alone
-does not roll back the database.
+If installation, build, restart or HTTP checks fail, the deployment attempts
+to restore the previous snapshot, restart PM2 and recheck HTTP. A recovered
+deployment still reports failure in Actions, so the broken release is visible.
+Restoration does not reinstall dependencies or rebuild the frontend.
+The previous successful snapshot is retained; older unused snapshots are
+removed after successful deployments. Restore work temporarily stops PM2
+frontend, backend and transcription worker.
+
+For manual rollback: Actions → Demo CI and AWS deploy → Run workflow →
+branch main → operation rollback. It restores the snapshot saved before the
+last deployment (or before the failed deployment needing recovery). It uses
+the same OIDC, temporary SSH rule, workflow concurrency and server lock.
+Frontend/backend CI jobs are intentionally skipped for rollback; no build or
+migration command runs. Manual rollback remains available even when the
+repository variable AWS_DEPLOY_ENABLED is false. There is no forward toggle
+or arbitrary commit selection: repeated rollback restores the same baseline.
+
+Migration safety is deliberately conservative. Pending migrations are detected
+using PostgreSQL SequelizeMeta and the configured migrations directory. A
+snapshot is marked non-restorable BEFORE any migration command is attempted,
+even if that command subsequently fails and leaves no migration-history entry.
+Both manual and automatic rollback refuse such a snapshot. They also refuse
+if the current migration-history/DB-target signature differs from the saved
+one. This does not detect out-of-band schema changes; do not run independent
+migrations concurrently. A code snapshot never replaces a database backup.
+
+If restore is blocked or fails, .ci-state/deploy-in-progress remains. Further
+deploys refuse to make a new baseline from that potentially broken state.
+Inspect the logs, review schema compatibility and choose a corrective migration
+or database recovery plan. Do not delete the marker simply to bypass the check.
+The successful-revision file alone does not assert health while that marker
+exists. An interrupted SSH session or terminated runner may also require this
+manual recovery; automatic rollback is not a guarantee against host failure.
+
+After rollback, the GitHub main branch still contains the reverted-on-server
+code. Revert/fix the offending commit before the next push; otherwise the next
+deployment will install it again. The first deployment of this feature creates
+a baseline of the currently running version, so it can itself be rolled back.
+
+Tests: `node --test scripts/ci/rollback.test.cjs`. The complete suite requires
+Linux with Node.js 22, tar, du and flock. It uses isolated temporary folders,
+fake npm/PM2/HTTP commands and a fake database; it does not alter live services.
+Windows runs the portable source-journal/path-safety tests only.
 
 Backend package.json/lock, PM2, migration configuration and this workflow are
 demo-owned and protected from CRM synchronization. When CRM dependencies

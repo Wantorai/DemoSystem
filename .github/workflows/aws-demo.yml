@@ -6,12 +6,20 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      operation:
+        description: Deploy main or restore the previous application snapshot
+        type: choice
+        options: [deploy, rollback]
+        default: deploy
+        required: true
 
 permissions:
   contents: read
 
 jobs:
   backend:
+    if: github.event_name != 'workflow_dispatch' || inputs.operation != 'rollback'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -29,8 +37,12 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm test -- --runInBand
+      - name: Test snapshot and rollback behavior
+        working-directory: .
+        run: node --test scripts/ci/rollback.test.cjs
 
   frontend:
+    if: github.event_name != 'workflow_dispatch' || inputs.operation != 'rollback'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
@@ -58,7 +70,10 @@ jobs:
 
   deploy:
     needs: [backend, frontend]
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.AWS_DEPLOY_ENABLED == 'true'
+    if: >-
+      ${{ !cancelled() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' &&
+          ((github.event_name == 'workflow_dispatch' && inputs.operation == 'rollback') ||
+           (vars.AWS_DEPLOY_ENABLED == 'true' && needs.backend.result == 'success' && needs.frontend.result == 'success')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: aws-demo
@@ -161,18 +176,26 @@ jobs:
           done
           echo "SSH is still unavailable after opening temporary access" >&2
           exit 1
-      - name: Deploy checked commit
+      - name: Deploy or roll back application
         shell: bash
+        env:
+          OPERATION: ${{ inputs.operation || 'deploy' }}
         run: |
           set -euo pipefail
           latest=$(git ls-remote origin refs/heads/main | cut -f1)
           if [[ "$latest" != "$GITHUB_SHA" ]]; then echo "A newer main commit exists; refusing stale deployment"; exit 1; fi
-          node scripts/ci/sync-source.cjs --check .
-          git archive --format=tar.gz -o "$RUNNER_TEMP/demo.tar.gz" HEAD crm-backend crm-fronend scripts/ci
+          if [[ "$OPERATION" == rollback ]]; then
+            git archive --format=tar.gz -o "$RUNNER_TEMP/demo.tar.gz" HEAD scripts/ci
+          elif [[ "$OPERATION" == deploy ]]; then
+            node scripts/ci/sync-source.cjs --check .
+            git archive --format=tar.gz -o "$RUNNER_TEMP/demo.tar.gz" HEAD crm-backend crm-fronend scripts/ci
+          else
+            echo "Invalid operation" >&2; exit 1
+          fi
           remote="/tmp/demo-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.tar.gz"
           opts=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4)
           scp "${opts[@]}" "$RUNNER_TEMP/demo.tar.gz" "$AWS_USER@$AWS_HOST:$remote"
-          ssh "${opts[@]}" "$AWS_USER@$AWS_HOST" "bash -s -- '$remote' '$GITHUB_SHA'" < scripts/ci/deploy-aws.sh
+          ssh "${opts[@]}" "$AWS_USER@$AWS_HOST" "bash -s -- '$remote' '$GITHUB_SHA' '$OPERATION'" < scripts/ci/deploy-aws.sh
       - name: Close temporary SSH access
         if: always()
         shell: bash
