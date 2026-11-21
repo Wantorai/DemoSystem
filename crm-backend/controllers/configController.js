@@ -16,7 +16,7 @@ const initConfig = async (req, res) => {
 
   try {
     // Получаем или создаем конфигурацию
-    const [config, created] = await Configs.findOrCreate({
+    const [config] = await Configs.findOrCreate({
       where: { addonId },
       defaults: { addonId },
     });
